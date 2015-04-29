@@ -1,6 +1,8 @@
 import ast
 import numbers
 
+#are we allowed to do this?
+import copy
 
 class SymbolicEngine:
     def __init__(self, function_name, program_ast):
@@ -14,23 +16,17 @@ class SymbolicEngine:
     # Note: all returned inputs should explore different program paths
     def explore(self):
         # Generates default input
-        input = generate_inputs(self.fnc, {})
-        print input
-        f = FunctionEvaluator(self.fnc, self.program_ast, input)
-        ret = f.eval()
+        #input = generate_inputs(self.fnc, {})
+        #print input
+        #f = FunctionEvaluator(self.fnc, self.program_ast, input)
+        #ret = f.eval()
 
         input_to_ret = []
-        input_to_ret.append((input, ret))
+        #input_to_ret.append((input, ret))
         
         ### Stuff we added
-        #TODO Is it good to do this here or should it be done in another class like
-        # with the FunctionEvaluator???
-        anSts = []
-        anSts.append(AnalyzerState())
-        currAnSt = anSts[-1] #-1 just takes first last element in the list
-
-        f = FunctionAnalyzer(self.fnc, self.program_ast, currAnSt, anSts)
-        f.analyze()
+        f = FunctionAnalyzer(self.fnc, self.program_ast, AnalyzerState())
+        finalStates = f.analyze()
         
         # Now all the analyzer states are in the anSts list and we can start to build
         # the formulas and give them to the SMT solver.TODO
@@ -38,7 +34,7 @@ class SymbolicEngine:
 
         # Once we have the Inputs we can get the return values.
         # To get the needed return values of our inputs we need to run something like:
-        #for anSt in anSts:
+        #for anSt in finalStates:
             #input = generate_inputs(self.fnc, inputs)
             #f = FunctionEvaluator(self.fnc, self.program_ast, input)
             #ret = f.eval()
@@ -56,8 +52,8 @@ class SymbolicEngine:
 # Analyzer #
 ############
 
-def analyze_expr(expr, fnc, currAnSt, anSts):
-    print "    -> run_expr()"
+def analyze_expr(expr, state):
+    print "    -> analyze_expr()"
     if type(expr) == ast.Tuple:
         r = []
         for el in expr.elts:
@@ -140,34 +136,39 @@ def analyze_expr(expr, fnc, currAnSt, anSts):
         # Evaluates all function arguments
         for i in range(0, len(expr.args)):
             inputs[f.args.args[i].id] = run_expr(expr.args[i], fnc)
-
-        fnc_eval = FunctionEvaluator(f, fnc.ast_root, inputs)
-        return fnc_eval.eval()
+        
+        fnc_a = FunctionAnalyzer(f, fnc.ast_root, inputs)
+        return fnc_a.analyze()
 
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
-def analyze_stmt(stmt, fnc, currAnSt, anSts):
+def analyze_stmt(stmt, state):
     print "  -> analyze_stmt()" 
 
     if type(stmt) == ast.Return:
         fnc.returned = True
-        fnc.return_val = run_expr(stmt.value, fnc)
+        fnc.return_val = analyze_expr(stmt.value, fnc)
         return
 
     if type(stmt) == ast.If:
-        #add condition to current path constraint, add negated condition to list of path
-        #constraints, and call 
-        cond = run_expr(stmt.test, fnc)
-        if cond:
-            run_body(stmt.body, fnc)
-        else:
-            run_body(stmt.orelse, fnc)
-        return
+        print str(stmt.test)
+        cond = analyze_expr(stmt.test, fnc)
+        print cond
+        state_true = state
+        state_false = state.copy()
+        state_true.addConstr() # TODO
+        state_false.addConstr()
+
+        ret_states_true = analyze_body(stmt.body, state_true)
+        ret_states_false = analyze_body(stmt.orelse, state_false)
+
+        ret_states_true += ret_states_false
+        return ret_states_true
 
     if type(stmt) == ast.Assign:
         assert (len(stmt.targets) == 1)  # Disallow a=b=c syntax
         lhs = stmt.targets[0]
-        rhs = run_expr(stmt.value, fnc)
+        rhs = analyze_expr(stmt.value, fnc)
         if type(lhs) == ast.Tuple:
             assert (type(rhs) == tuple)
             assert (len(rhs) == len(lhs.elts))
@@ -177,7 +178,7 @@ def analyze_stmt(stmt, fnc, currAnSt, anSts):
                 fnc.state[el.id] = rhs[el_index]
             return
         if type(lhs) == ast.Name:
-            fnc.state[lhs.id] = rhs
+            #fnc.state[lhs.id] = rhs
             return
         
     if type(stmt) == ast.Assert:
@@ -188,10 +189,10 @@ def analyze_stmt(stmt, fnc, currAnSt, anSts):
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
-def analyze_body(body, fnc, currAnSt, anSts):
+def analyze_body(body, fnc):
     print "-> anaylze_body()"
     for stmt in body:
-        analyze_stmt(stmt, fnc, currAnSt, anSts)
+        analyze_stmt(stmt, fnc)
         if fnc.returned:
             return
 
@@ -352,15 +353,16 @@ class FunctionEvaluator:
     def eval(self):
         print "FunctionEvaluator.eval()"
         run_body(self.f.body, self)
+        print "functionEvaluator.state: "+str(state)
 
         assert (self.returned)
         return self.return_val
 
 class FunctionAnalyzer:
-    def __init__(self, f, ast_root, currAnSt, anSts):
+    def __init__(self, f, ast_root, analyzerState):
 
-        self.analyzerState = currAnSt
-        self.anSts = anSts
+        self.analyzerStates = []
+        self.analyzerStates.append(analyzerState.copy())
         self.returned = False
         #This is nod needed right?
         #self.return_val = None
@@ -369,47 +371,34 @@ class FunctionAnalyzer:
 
     def analyze(self):
         print "FunctionAnalyzer.analyze()"
-        analyze_body(self.f.body, self, self.analyzerState, self.anSts)
-
+        analyze_body(self.f.body, self)
         assert (self.returned)
-        #return self.return_val
+        return self.analyzerStates
+
+    def addSymToAll(self, var, sym):
+        return
 
 class AnalyzerState:
     def __init__(self):
-        self.symstore = SymbolicStore()
-        self.pconstrs = PathConstraint()
+        # Dictionary that contains variables to symbolics mapping
+        self.symstore = {}
+        # List of boolean constraints
+        self.pconstrs = []
         
     def addSym(self, var, sym):
-        self.symstore.add(var, sym)
+        self.symstore[var] = sym
 
     def getSym(self, var):
-        self.symstore.get(var)
+        return self.symstore[var]
     
     def addConst(self, constr):
-        self.pconstrs.add(constr)
+        self.pconstrs.append(constr)
 
-class SymbolicStore:
-    def __init__(self):
-        #Dictionary that contains variables to symbolics mapping
-        self.varsym = {}
-    
-    def add(self, var, sym):
-        self.varsym[var] = sym
-
-    def get(self, var):
-        return self.varsym[var]
-
-class PathConstraint:
-    def __init__(self):
-        #List of booleanexpressions with symbolics
-        self.constraints = []
-    
-    def add(self, constr):
-        self.constraints.append(constr)
-
-    def addToSolver(s):
-        s.add()
-
+    def copy(self):
+        newState = AnalyzerState()
+        newState.symstore = copy.deepcopy(self.symstore)
+        newState.pconstrs = copy.deepcopy(self.pconstrs)
+        return newState
 
 ####################
 # Helper Functions #
