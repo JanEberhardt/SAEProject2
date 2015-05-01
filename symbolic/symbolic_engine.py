@@ -18,7 +18,6 @@ class SymbolicEngine:
     def explore(self):
         # Generates default input
         input = generate_inputs(self.fnc, {})
-        #print input
         #f = FunctionEvaluator(self.fnc, self.program_ast, input)
         #ret = f.eval()
 
@@ -26,20 +25,20 @@ class SymbolicEngine:
         #input_to_ret.append((input, ret))
         
         ### Stuff we added
-        f = FunctionAnalyzer(self.fnc, self.program_ast, input)
-        finalStates = f.analyze()
-        
-        # Now all the analyzer states are in the anSts list and we can start to build
-        # the formulas and give them to the SMT solver.TODO
-        # Each AnalyzerState then results in a different Input.
 
-        # Once we have the Inputs we can get the return values.
-        # To get the needed return values of our inputs we need to run something like:
-        #for anSt in finalStates:
-            #input = generate_inputs(self.fnc, inputs)
-            #f = FunctionEvaluator(self.fnc, self.program_ast, input)
-            #ret = f.eval()
-            #input_to_ret.append((input, ret))
+        # Start the Function Analyzer with the main function
+        fa = FunctionAnalyzer(self.fnc, self.program_ast, input)
+        finalStates = fa.analyze()
+        # Now all the final states are in a list and we just need to give the list
+        # to the SMT solver to get the inputs, and then run the evaluator on those
+        # inputs...
+        for finalState in finalStates:
+            finalState.solve()
+            inputs = finalState.inputs
+            fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
+            ret = fe.eval()
+            input_to_ret.append((finalState.inputs, ret))
+
         ### End stuff we added
 
 
@@ -158,26 +157,14 @@ def analyze_stmt(stmt, state):
 
     #TODO
     if type(stmt) == ast.If:
-        #analyze ture_condition:
         true_cond = analyze_expr(stmt.test, state)
-        #create the opposit condition by inserting a new node in the ast!
-        notExpr = ast.UnaryOp()
-        notExpr.op = ast.Not()
-        notExpr.operand = stmt.test
-
-        #analyze false condition
-        false_cond = analyze_expr(notExpr, state)
 
         state_true = state
         state_false = state.copy()
         state_true.addConstr(true_cond)
-        state_false.addConstr(false_cond)
+        state_false.addConstr(Not(true_cond))
 
-        returnStates = []
-        returnStatesTrue = analyze_body(stmt.body, state_true)
-        returnStatesFalse = analyze_body(stmt.orelse, state_false)
-        returnStates = returnStatesTrue + returnStatesFalse
-        return returnStates
+        return analyze_body(stmt.body, state_true) + analyze_body(stmt.orelse, state_false)
 
     if type(stmt) == ast.Assign:
         assert (len(stmt.targets) == 1)  # Disallow a=b=c syntax
@@ -225,7 +212,6 @@ def analyze_body(body, state):
 ###############
 
 def run_expr(expr, fnc):
-    print "run_expr()"
     if type(expr) == ast.Tuple:
         r = []
         for el in expr.elts:
@@ -316,7 +302,6 @@ def run_expr(expr, fnc):
 
 
 def run_stmt(stmt, fnc):
-    print "run_stmt()" 
     if type(stmt) == ast.Return:
         fnc.returned = True
         fnc.return_val = run_expr(stmt.value, fnc)
@@ -361,7 +346,6 @@ def run_body(body, fnc):
         if fnc.returned:
             return
 
-
 class FunctionEvaluator:
     def __init__(self, f, ast_root, inputs):
         assert (type(f) == ast.FunctionDef)
@@ -375,10 +359,7 @@ class FunctionEvaluator:
         self.f = f
 
     def eval(self):
-        print "FunctionEvaluator.eval()"
         run_body(self.f.body, self)
-        print "functionEvaluator.state: "+str(state)
-
         assert (self.returned)
         return self.return_val
 
@@ -386,20 +367,20 @@ class FunctionAnalyzer:
     def __init__(self, f, ast_root, inputs):
         self.mainFunctionInputs = inputs
         self.analyzerStates = []
-       
         self.ast_root = ast_root
         self.f = f
 
     def analyze(self):
         print "FunctionAnalyzer.analyze()"
         initialState = AnalyzerState()
+        initialState.inputs = self.mainFunctionInputs.copy()
         for key in self.mainFunctionInputs:
             initialState.addSym(key, Int(key))
         print "Initial Symstore: "+str(initialState.symstore)
         self.analyzerStates = analyze_body(self.f.body, initialState)
         for state in self.analyzerStates:
             assert (state.returned)
-        print "function x has "+str(len(self.analyzerStates))+" final state(s):"
+        print "function 'whatever' has "+str(len(self.analyzerStates))+" final state(s):"
         for state in self.analyzerStates:
             print "symstore: "+str(state.symstore)+" pconstr: "+str(state.pconstrs)
         # Only return the States that did return (in the actual function)
@@ -412,17 +393,18 @@ class FunctionAnalyzer:
 class AnalyzerState:
     def __init__(self):
 
+        self.inputs = {}
+
         # Dictionary that contains variables to symbolics mapping
         self.symstore = {}
 
         # List of boolean constraints
         self.pconstrs = []
 
-        # Boolean that says wheter the function returned in this state
-        # TODO: Is this necessary? Can there be cases where we didn't return
-        # at a leaf?
         self.returned = False
-        self.return_val = None
+        #self.return_val = None
+
+        self.solver = Solver()
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
@@ -439,11 +421,19 @@ class AnalyzerState:
 
     def copy(self):
         newState = AnalyzerState()
-        #TODO: How to copy the symstore???
-        #newState.symstore = copy.deepcopy(self.symstore)
+        newState.inputs = self.inputs.copy()
         newState.symstore = self.symstore.copy()
-        newState.pconstrs = copy.deepcopy(self.pconstrs)
+        newState.pconstrs = copy.copy(self.pconstrs)
         return newState
+    
+    def solve(self):
+        assert (self.returned)
+        for pconstr in self.pconstrs:
+            self.solver.add(pconstr)
+        self.solver.check()
+        model = self.solver.model()
+        for key in self.inputs:
+            self.inputs[key] = int(str(model[self.symstore[key]]))
 
 ####################
 # Helper Functions #
