@@ -3,6 +3,7 @@ import numbers
 
 #are we allowed to do this?
 import copy
+from z3 import *
 
 class SymbolicEngine:
     def __init__(self, function_name, program_ast):
@@ -16,7 +17,7 @@ class SymbolicEngine:
     # Note: all returned inputs should explore different program paths
     def explore(self):
         # Generates default input
-        #input = generate_inputs(self.fnc, {})
+        input = generate_inputs(self.fnc, {})
         #print input
         #f = FunctionEvaluator(self.fnc, self.program_ast, input)
         #ret = f.eval()
@@ -25,7 +26,7 @@ class SymbolicEngine:
         #input_to_ret.append((input, ret))
         
         ### Stuff we added
-        f = FunctionAnalyzer(self.fnc, self.program_ast, AnalyzerState())
+        f = FunctionAnalyzer(self.fnc, self.program_ast, input)
         finalStates = f.analyze()
         
         # Now all the analyzer states are in the anSts list and we can start to build
@@ -54,6 +55,8 @@ class SymbolicEngine:
 
 def analyze_expr(expr, state):
     print "    -> analyze_expr()"
+
+    #TODO
     if type(expr) == ast.Tuple:
         r = []
         for el in expr.elts:
@@ -65,7 +68,7 @@ def analyze_expr(expr, state):
             return 1
         elif expr.id == 'False':
             return 0
-        return fnc.state[expr.id]
+        return state.getSym(expr.id)
 
     if type(expr) == ast.Num:
         assert (isinstance(expr.n, numbers.Integral))
@@ -93,16 +96,16 @@ def analyze_expr(expr, state):
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
-            return not run_expr(expr.operand, fnc)
+            return not analyze_expr(expr.operand, state)
         if type(expr.op) == ast.USub:
-            return -run_expr(expr.operand, fnc)
+            return -analyze_expr(expr.operand, state)
 
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
-        e1 = run_expr(expr.left, fnc)
+        e1 = analyze_expr(expr.left, state)
         op = expr.ops[0]
-        e2 = run_expr(expr.comparators[0], fnc)
+        e2 = analyze_expr(expr.comparators[0], state)
         if type(op) == ast.Eq:
             return e1 == e2
         if type(op) == ast.NotEq:
@@ -146,29 +149,42 @@ def analyze_stmt(stmt, state):
     print "  -> analyze_stmt()" 
 
     if type(stmt) == ast.Return:
-        fnc.returned = True
-        fnc.return_val = analyze_expr(stmt.value, fnc)
-        return
+        state.returned = True
+        state.return_val = analyze_expr(stmt.value, state)
+        returnStates = []
+        returnStates.append(state)
+        assert (returnStates[0].returned)
+        return returnStates
 
+    #TODO
     if type(stmt) == ast.If:
-        print str(stmt.test)
-        cond = analyze_expr(stmt.test, fnc)
-        print cond
+        #analyze ture_condition:
+        true_cond = analyze_expr(stmt.test, state)
+        #create the opposit condition by inserting a new node in the ast!
+        notExpr = ast.UnaryOp()
+        notExpr.op = ast.Not()
+        notExpr.operand = stmt.test
+
+        #analyze false condition
+        false_cond = analyze_expr(notExpr, state)
+
         state_true = state
         state_false = state.copy()
-        state_true.addConstr() # TODO
-        state_false.addConstr()
+        state_true.addConstr(true_cond)
+        state_false.addConstr(false_cond)
 
-        ret_states_true = analyze_body(stmt.body, state_true)
-        ret_states_false = analyze_body(stmt.orelse, state_false)
-
-        ret_states_true += ret_states_false
-        return ret_states_true
+        returnStates = []
+        returnStatesTrue = analyze_body(stmt.body, state_true)
+        returnStatesFalse = analyze_body(stmt.orelse, state_false)
+        returnStates = returnStatesTrue + returnStatesFalse
+        return returnStates
 
     if type(stmt) == ast.Assign:
         assert (len(stmt.targets) == 1)  # Disallow a=b=c syntax
         lhs = stmt.targets[0]
-        rhs = analyze_expr(stmt.value, fnc)
+        rhs = analyze_expr(stmt.value, state)
+
+        #TODO
         if type(lhs) == ast.Tuple:
             assert (type(rhs) == tuple)
             assert (len(rhs) == len(lhs.elts))
@@ -177,9 +193,13 @@ def analyze_stmt(stmt, state):
                 assert (type(el) == ast.Name)
                 fnc.state[el.id] = rhs[el_index]
             return
+        # Standard Case
         if type(lhs) == ast.Name:
-            #fnc.state[lhs.id] = rhs
-            return
+            state.addSym(lhs.id, rhs)
+            returnStates = []
+            returnStates.append(state)
+            #print "assigment is now returning "+str(len(returnStates))+" state(s)"
+            return returnStates
         
     if type(stmt) == ast.Assert:
         # TODO: implement check whether the assertion holds. 
@@ -189,12 +209,16 @@ def analyze_stmt(stmt, state):
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
-def analyze_body(body, fnc):
+def analyze_body(body, state):
     print "-> anaylze_body()"
+    states = []
+    states.append(state)
     for stmt in body:
-        analyze_stmt(stmt, fnc)
-        if fnc.returned:
-            return
+        newStates = []
+        for tmpState in states:
+            newStates.extend(analyze_stmt(stmt, tmpState))
+        states = newStates
+    return states
 
 ###############
 # Interpreter #
@@ -359,44 +383,65 @@ class FunctionEvaluator:
         return self.return_val
 
 class FunctionAnalyzer:
-    def __init__(self, f, ast_root, analyzerState):
-
+    def __init__(self, f, ast_root, inputs):
+        self.mainFunctionInputs = inputs
         self.analyzerStates = []
-        self.analyzerStates.append(analyzerState.copy())
-        self.returned = False
-        #This is nod needed right?
-        #self.return_val = None
+       
         self.ast_root = ast_root
         self.f = f
 
     def analyze(self):
         print "FunctionAnalyzer.analyze()"
-        analyze_body(self.f.body, self)
-        assert (self.returned)
-        return self.analyzerStates
-
-    def addSymToAll(self, var, sym):
-        return
+        initialState = AnalyzerState()
+        for key in self.mainFunctionInputs:
+            initialState.addSym(key, Int(key))
+        print "Initial Symstore: "+str(initialState.symstore)
+        self.analyzerStates = analyze_body(self.f.body, initialState)
+        for state in self.analyzerStates:
+            assert (state.returned)
+        print "function x has "+str(len(self.analyzerStates))+" final state(s):"
+        for state in self.analyzerStates:
+            print "symstore: "+str(state.symstore)+" pconstr: "+str(state.pconstrs)
+        # Only return the States that did return (in the actual function)
+        returnStates = []
+        for tmpState in self.analyzerStates:
+            if tmpState.returned:
+                returnStates.append(tmpState)
+        return returnStates
 
 class AnalyzerState:
     def __init__(self):
+
         # Dictionary that contains variables to symbolics mapping
         self.symstore = {}
+
         # List of boolean constraints
         self.pconstrs = []
+
+        # Boolean that says wheter the function returned in this state
+        # TODO: Is this necessary? Can there be cases where we didn't return
+        # at a leaf?
+        self.returned = False
+        self.return_val = None
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
+        print "         updated or added something in the symstore..."
+        print "         current state.symstore: " + str(self.symstore)
 
     def getSym(self, var):
         return self.symstore[var]
     
-    def addConst(self, constr):
+    def addConstr(self, constr):
         self.pconstrs.append(constr)
+        print "         updated or added something to the pconstrs..."
+        print "         current state.pconstrs: " + str(self.pconstrs)
 
     def copy(self):
         newState = AnalyzerState()
-        newState.symstore = copy.deepcopy(self.symstore)
+        #TODO: How to copy the symstore???
+        #newState.symstore = copy.deepcopy(self.symstore)
+        newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.deepcopy(self.pconstrs)
         return newState
 
