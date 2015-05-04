@@ -34,10 +34,11 @@ class SymbolicEngine:
         # inputs...
         for finalState in finalStates:
             finalState.solve()
-            inputs = finalState.inputs
-            fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
-            ret = fe.eval()
-            input_to_ret.append((finalState.inputs, ret))
+            if finalState.solved:
+                inputs = finalState.inputs
+                fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
+                ret = fe.eval()
+                input_to_ret.append((finalState.inputs, ret))
 
         ### End stuff we added
 
@@ -54,14 +55,19 @@ class SymbolicEngine:
 
 def analyze_expr(expr, state):
     print "    -> analyze_expr()"
+    #TODO: overall: what happends if analyze_expr returns multiple states (ast.Call)
+    # and we do for instance analyze_expr(...) + analyze_expr(...)
+    # If only one returns multiple states just loop over them, but what if both 
+    # or even more (Tuple stuff...) return multiple states -> do some crossproduct stuff?
 
-    #TODO
+    #TODO: Totally fine as long as each expr just returns one state
     if type(expr) == ast.Tuple:
         r = []
         for el in expr.elts:
-            r.append(run_expr(el, fnc))
+            r.append(analyze_expr(el, state))
         return tuple(r)
 
+    #DONE: This is always fine...
     if type(expr) == ast.Name:
         if expr.id == 'True':
             return 1
@@ -69,29 +75,31 @@ def analyze_expr(expr, state):
             return 0
         return state.getSym(expr.id)
 
+    #DONE: This is always fine...
     if type(expr) == ast.Num:
         assert (isinstance(expr.n, numbers.Integral))
         return expr.n
 
+    #TODO: Totally fine as long as each expr just returns one state
     if type(expr) == ast.BinOp:
         if type(expr.op) == ast.Add:
-            return run_expr(expr.left, fnc) + run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) + analyze_expr(expr.right, state)
         if type(expr.op) == ast.Sub:
-            return run_expr(expr.left, fnc) - run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) - analyze_expr(expr.right, state)
         if type(expr.op) == ast.Mult:
-            return run_expr(expr.left, fnc) * run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) * analyze_expr(expr.right, state)
         if type(expr.op) == ast.Div:
-            return run_expr(expr.left, fnc) / run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) / analyze_expr(expr.right, state)
         if type(expr.op) == ast.Mod:
-            return run_expr(expr.left, fnc) % run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) % analyze_expr(expr.right, state)
         if type(expr.op) == ast.Pow:
-            return run_expr(expr.left, fnc) ** run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) ** analyze_expr(expr.right, state)
 
         # Evaluate only with constants
         if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
-            return run_expr(expr.left, fnc) << run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) << analyze_expr(expr.right, state)
         if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
-            return run_expr(expr.left, fnc) >> run_expr(expr.right, fnc)
+            return analyze_expr(expr.left, state) >> analyze_expr(expr.right, state)
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
@@ -122,25 +130,31 @@ def analyze_expr(expr, state):
         if type(expr.op) == ast.And:
             r = True
             for v in expr.values:
-                r = r and run_expr(v, fnc)
+                r = r and analyze_expr(v, state)
             return r
         if type(expr.op) == ast.Or:
             r = False
             for v in expr.values:
-                r = r or run_expr(v, fnc)
+                r = r or analyze_expr(v, state)
             return r
 
     if type(expr) == ast.Call:
-        f = find_function(fnc.ast_root, expr.func.id)
+        f = find_function(state.ast_root, expr.func.id)
 
         inputs = {}
         assert (len(expr.args) == len(f.args.args))
         # Evaluates all function arguments
         for i in range(0, len(expr.args)):
-            inputs[f.args.args[i].id] = run_expr(expr.args[i], fnc)
+            inputs[f.args.args[i].id] = analyze_expr(expr.args[i], state)
         
-        fnc_a = FunctionAnalyzer(f, fnc.ast_root, inputs)
-        return fnc_a.analyze()
+        fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
+        fnc_a.analyze()
+        returnStates = []
+        for analyzerReturn in fnc_a.analyzerStates:
+            returnStates.append(state.mergeWithState(analyzerReturn))
+        #TODO: This expression now returns multiple states!
+        #TODO: How to handle the return stuff???
+        return returnStates
 
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
@@ -155,7 +169,7 @@ def analyze_stmt(stmt, state):
         assert (returnStates[0].returned)
         return returnStates
 
-    #TODO
+    #DONE
     if type(stmt) == ast.If:
         true_cond = analyze_expr(stmt.test, state)
 
@@ -203,7 +217,10 @@ def analyze_body(body, state):
     for stmt in body:
         newStates = []
         for tmpState in states:
-            newStates.extend(analyze_stmt(stmt, tmpState))
+            if tmpState.returned:
+                newStates.append(tmpState)
+            else:
+                newStates.extend(analyze_stmt(stmt, tmpState))
         states = newStates
     return states
 
@@ -372,7 +389,7 @@ class FunctionAnalyzer:
 
     def analyze(self):
         print "FunctionAnalyzer.analyze()"
-        initialState = AnalyzerState()
+        initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
         for key in self.mainFunctionInputs:
             initialState.addSym(key, Int(key))
@@ -380,7 +397,7 @@ class FunctionAnalyzer:
         self.analyzerStates = analyze_body(self.f.body, initialState)
         for state in self.analyzerStates:
             assert (state.returned)
-        print "function 'whatever' has "+str(len(self.analyzerStates))+" final state(s):"
+        print "function '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
         for state in self.analyzerStates:
             print "symstore: "+str(state.symstore)+" pconstr: "+str(state.pconstrs)
         # Only return the States that did return (in the actual function)
@@ -391,7 +408,7 @@ class FunctionAnalyzer:
         return returnStates
 
 class AnalyzerState:
-    def __init__(self):
+    def __init__(self, ast_root):
 
         self.inputs = {}
 
@@ -402,9 +419,10 @@ class AnalyzerState:
         self.pconstrs = []
 
         self.returned = False
-        #self.return_val = None
-
+        self.returnValue = None
+        self.solved = False
         self.solver = Solver()
+        self.ast_root = ast_root
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
@@ -420,20 +438,36 @@ class AnalyzerState:
         print "         current state.pconstrs: " + str(self.pconstrs)
 
     def copy(self):
-        newState = AnalyzerState()
+        newState = AnalyzerState(self.ast_root)
         newState.inputs = self.inputs.copy()
         newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.copy(self.pconstrs)
         return newState
     
+    def mergeWithState(self, otherState):
+        mergedState = self.copy()
+        for sym in otherState.symstore:
+            mergedState.addSym(sym, otherState.getSym(sym))
+        for pc in otherState.pconstrs:
+            mergedState.addConstr(pc)
+        return mergedState
+
     def solve(self):
         assert (self.returned)
         for pconstr in self.pconstrs:
             self.solver.add(pconstr)
-        self.solver.check()
-        model = self.solver.model()
-        for key in self.inputs:
-            self.inputs[key] = int(str(model[self.symstore[key]]))
+        try:
+            self.solver.check()
+            model = self.solver.model()
+            for key in self.inputs:
+                self.inputs[key] = int(str(model[self.symstore[key]]))
+            self.solved = True 
+        except Z3Exception as ex:
+            #TODO: Is there a better way to do this than converting to str?
+            if str(ex) == "model is not available":
+                print "Tried to solve model but failed, formula contains contradictions, this state will be skipped..."
+            else:
+                print "Unknown Z3Exception: " + str(ex)
 
 ####################
 # Helper Functions #
