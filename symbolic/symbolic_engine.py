@@ -63,16 +63,26 @@ def analyze_expr(expr, state):
         return tuple(r)
 
     if type(expr) == ast.Name:
-        if expr.id == 'True':
-            return 1
-        elif expr.id == 'False':
-            return 0
-        return state.getSym(expr.id)
+        #Theres nothing left to do here!
+        #if expr.id == 'True':
+        #    return 1
+        #elif expr.id == 'False':
+        #    return 0
+        #return state.getSym(expr.id)
+        ret = []
+        ret.append(state)
+        return ret
 
     if type(expr) == ast.Num:
-        assert (isinstance(expr.n, numbers.Integral))
-        return expr.n
+        #Theres nothing left to do here!
+        #assert (isinstance(expr.n, numbers.Integral))
+        #return expr.n
+        ret = []
+        ret.append(state)
+        return ret
 
+    #TODO: Totally fine as long as each expr just returns one state
+    #Just do it on the crossproduct man!
     if type(expr) == ast.BinOp:
         if type(expr.op) == ast.Add:
             return run_expr(expr.left, fnc) + run_expr(expr.right, fnc)
@@ -95,28 +105,64 @@ def analyze_expr(expr, state):
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
-            return not analyze_expr(expr.operand, state)
+            notStates = analyze_expr(expr.operand, state)
+            for notState in notStates:
+                #TODO:
+                #what now? How do I not a state??? 
+                break
+            return notStates
         if type(expr.op) == ast.USub:
             return -analyze_expr(expr.operand, state)
 
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
-        e1 = analyze_expr(expr.left, state)
+        left_states = analyze_expr(expr.left, state)
+        assert(len(left_states) > 0)
         op = expr.ops[0]
-        e2 = analyze_expr(expr.comparators[0], state)
-        if type(op) == ast.Eq:
-            return e1 == e2
-        if type(op) == ast.NotEq:
-            return e1 != e2
-        if type(op) == ast.Gt:
-            return e1 > e2
-        if type(op) == ast.GtE:
-            return e1 >= e2
-        if type(op) == ast.Lt:
-            return e1 < e2
-        if type(op) == ast.LtE:
-            return e1 <= e2
+        right_states = analyze_expr(expr.comparators[0], state)
+        assert(len(left_states) > 0)
+
+        # Now that we got the states, lets figure out the actual value of the expression
+        # in each case...
+        left_values = []
+        for left_state in left_states:
+            fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
+            left_values.append(run_expr(expr.left, fnc))
+        right_values = []
+        for right_state in right_states:
+            fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
+            right_values.append(run_expr(expr.comparators[0], fnc))
+        assert(len(left_values) == len(left_states))
+        assert(len(right_values) == len(right_states))
+        
+        # Let's build the states that we want to return...
+        #TODO this could somewhere be done generically, since we will use this again 
+        # and again...
+        returnStates = []
+        for i in range(0, len(left_values)):
+            for j in range(0, len(right_values)):
+                e1 = left_values[i]
+                e2 = right_values[i]
+                if type(op) == ast.Eq:
+                    pconstr = (e1 == e2)
+                if type(op) == ast.NotEq:
+                    pconstr =  (e1 != e2)
+                if type(op) == ast.Gt:
+                    pconstr = (e1 > e2)
+                if type(op) == ast.GtE:
+                    pconstr = (e1 >= e2)
+                if type(op) == ast.Lt:
+                    pconstr = (e1 < e2)
+                if type(op) == ast.LtE:
+                    pconstr = (e1 <= e2)
+                newState = state.copy()
+                newState.addConstr(pconstr)
+                returnStates.append(newState)
+        assert(len(returnStates) > 0)
+        for returnState in returnStates:
+            returnState.printMe() 
+        return returnStates
 
     if type(expr) == ast.BoolOp:
         if type(expr.op) == ast.And:
@@ -152,19 +198,22 @@ def analyze_stmt(stmt, state):
         state.return_val = analyze_expr(stmt.value, state)
         returnStates = []
         returnStates.append(state)
-        assert (returnStates[0].returned)
         return returnStates
 
     #TODO
     if type(stmt) == ast.If:
-        true_cond = analyze_expr(stmt.test, state)
-
-        state_true = state
-        state_false = state.copy()
-        state_true.addConstr(true_cond)
-        state_false.addConstr(Not(true_cond))
-
-        return analyze_body(stmt.body, state_true) + analyze_body(stmt.orelse, state_false)
+        true_states = analyze_expr(stmt.test, state)
+        false_test_ast = ast.UnaryOp()
+        false_test_ast.op = ast.Not()
+        false_test_ast.operand = stmt.test
+        false_states = analyze_expr(false_test_ast, state)
+        
+        returnStates = []
+        for true_state in true_states:
+            returnStates.extend(analyze_body(stmt.body, true_state))
+        for false_state in false_states:
+            returnStates.extend(analyze_body(stmt.orelse, false_state))
+        return returnStates
 
     if type(stmt) == ast.Assign:
         assert (len(stmt.targets) == 1)  # Disallow a=b=c syntax
@@ -348,9 +397,11 @@ def run_body(body, fnc):
 
 class FunctionEvaluator:
     def __init__(self, f, ast_root, inputs):
-        assert (type(f) == ast.FunctionDef)
-        for arg in f.args.args:
-            assert arg.id in inputs
+        #TODO: Isn't it bad to comment out stuff that was kind of in the reference
+        # solution????!!!!!!!!!!!!!!!!!
+        #assert (type(f) == ast.FunctionDef)
+        #for arg in f.args.args:
+        #    assert arg.id in inputs
 
         self.state = inputs.copy()
         self.returned = False
@@ -372,7 +423,7 @@ class FunctionAnalyzer:
 
     def analyze(self):
         print "FunctionAnalyzer.analyze()"
-        initialState = AnalyzerState()
+        initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
         for key in self.mainFunctionInputs:
             initialState.addSym(key, Int(key))
@@ -380,9 +431,9 @@ class FunctionAnalyzer:
         self.analyzerStates = analyze_body(self.f.body, initialState)
         for state in self.analyzerStates:
             assert (state.returned)
-        print "function 'whatever' has "+str(len(self.analyzerStates))+" final state(s):"
+        print "function '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
         for state in self.analyzerStates:
-            print "symstore: "+str(state.symstore)+" pconstr: "+str(state.pconstrs)
+            state.printMe()
         # Only return the States that did return (in the actual function)
         returnStates = []
         for tmpState in self.analyzerStates:
@@ -391,7 +442,7 @@ class FunctionAnalyzer:
         return returnStates
 
 class AnalyzerState:
-    def __init__(self):
+    def __init__(self, ast_root):
 
         self.inputs = {}
 
@@ -402,9 +453,10 @@ class AnalyzerState:
         self.pconstrs = []
 
         self.returned = False
-        #self.return_val = None
-
+        self.returnValue = None
+        self.solved = False
         self.solver = Solver()
+        self.ast_root = ast_root 
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
@@ -419,8 +471,12 @@ class AnalyzerState:
         print "         updated or added something to the pconstrs..."
         print "         current state.pconstrs: " + str(self.pconstrs)
 
+    def printMe(self):
+        print "State:"
+        print "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs) 
+
     def copy(self):
-        newState = AnalyzerState()
+        newState = AnalyzerState(self.ast_root)
         newState.inputs = self.inputs.copy()
         newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.copy(self.pconstrs)
