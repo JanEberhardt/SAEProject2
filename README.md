@@ -1,7 +1,5 @@
 # SAEProject2
 Software Architecture and Engineering Project 2
-<<<<<<< Updated upstream
-=======
 
 TODOS:
 ======
@@ -16,4 +14,3 @@ TODOS:
 OPTIMIZATIONS:
 ==============
 - If Pathconstraint contains a false somewhere, we can direclty throw away that state...
->>>>>>> Stashed changes
