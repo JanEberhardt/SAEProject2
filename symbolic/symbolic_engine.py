@@ -2,6 +2,7 @@ import ast
 import numbers
 
 #are we allowed to do this?
+import sys
 import copy
 from z3 import *
 
@@ -44,6 +45,8 @@ class SymbolicEngine:
 
         #TODO What about assertions????
         assetion_violations_to_input = {}
+        for finalState in finalStates:
+            assetion_violations_to_input.update(finalState.violated_assertions)
 
         return (input_to_ret, assetion_violations_to_input)
 
@@ -55,7 +58,7 @@ class SymbolicEngine:
 # This function now returns not only a list of states but also a value 
 # -> the evaluated value of the expresssion!
 def analyze_expr(expr, state):
-    print "    -> analyze_expr()"
+    print >> sys.stderr, "    -> analyze_expr()"
 
     #TODO
     if type(expr) == ast.Tuple:
@@ -201,7 +204,7 @@ def analyze_expr(expr, state):
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
 def analyze_stmt(stmt, state):
-    print "  -> analyze_stmt()" 
+    print >> sys.stderr, "  -> analyze_stmt()" 
 
     if type(stmt) == ast.Return:
         returnStates = []
@@ -264,12 +267,33 @@ def analyze_stmt(stmt, state):
         # TODO: implement check whether the assertion holds. 
         # However do not throw exception in case the assertion does not hold.
         # Instead return inputs that trigger the violation from SymbolicEngine.explore()
-        return
+
+        # negate expression
+        negation = ast.UnaryOp()
+        negation.op = ast.Not()
+        negation.operand = stmt.test
+
+        # run expression
+        states_values = analyze_expr(negation, state)
+        for state, value in states_values:
+            if stmt in state.violated_assertions: continue
+
+            state2 = state.copy()
+            state2.addConstr(value)
+            state2.returned = True
+            state2.solve()
+            
+            if state2.solved:
+                state.violated_assertions[stmt] = state2.inputs
+                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(state2.inputs)
+                break
+        
+        return [state]
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
 def analyze_body(body, state):
-    print "-> anaylze_body()"
+    print >> sys.stderr, "-> anaylze_body()"
     states = []
     states.append(state)
     for stmt in body:
@@ -445,18 +469,25 @@ class FunctionAnalyzer:
         self.f = f
 
     def analyze(self):
-        print "FunctionAnalyzer.analyze()"
+        print >> sys.stderr, "FunctionAnalyzer.analyze()"
+
         initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
+
         for key in self.mainFunctionInputs:
             initialState.addSym(key, Int(key))
-        print "Initial Symstore: "+str(initialState.symstore)
+
+        print >> sys.stderr, "Initial Symstore: "+str(initialState.symstore)
+
         self.analyzerStates = analyze_body(self.f.body, initialState)
         for state in self.analyzerStates:
             assert (state.returned)
-        print "function '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
+
+        print >> sys.stderr, "function '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
+
         for state in self.analyzerStates:
             state.printMe()
+
         # Only return the States that did return (in the actual function)
         returnStates = []
         for tmpState in self.analyzerStates:
@@ -475,6 +506,9 @@ class AnalyzerState:
         # List of boolean constraints
         self.pconstrs = []
 
+        # List of violated assertions
+        self.violated_assertions = {}
+
         self.returned = False
         self.returnValue = None
         self.solved = False
@@ -483,20 +517,20 @@ class AnalyzerState:
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
-        print "         updated or added something in the symstore..."
-        print "         current state.symstore: " + str(self.symstore)
+        print >> sys.stderr, "         updated or added something in the symstore..."
+        print >> sys.stderr, "         current state.symstore: " + str(self.symstore)
 
     def getSym(self, var):
         return self.symstore[var]
     
     def addConstr(self, constr):
         self.pconstrs.append(constr)
-        print "         updated or added something to the pconstrs..."
-        print "         current state.pconstrs: " + str(self.pconstrs)
+        print >> sys.stderr, "         updated or added something to the pconstrs..."
+        print >> sys.stderr, "         current state.pconstrs: " + str(self.pconstrs)
 
     def printMe(self):
-        print "State:"
-        print "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs) 
+        print >> sys.stderr, "State:"
+        print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs) 
 
     def copy(self):
         newState = AnalyzerState(self.ast_root)
@@ -517,18 +551,15 @@ class AnalyzerState:
         assert (self.returned)
         for pconstr in self.pconstrs:
             self.solver.add(pconstr)
-        try:
-            self.solver.check()
+        if str(self.solver.check()) == "sat":
             model = self.solver.model()
-            for key in self.inputs:
-                self.inputs[key] = int(str(model[self.symstore[key]]))
+            print >> sys.stderr, "model: " + str(model)
+            for key in model:
+                self.symstore[key] = int(str(model[key]))
             self.solved = True 
-        except Z3Exception as ex:
-            #TODO: Is there a better way to do this than converting to str?
-            if str(ex) == "model is not available":
-                print "Tried to solve model but failed, formula contains contradictions, this state will be skipped..."
-            else:
-                print "Unknown Z3Exception: " + str(ex)
+        else:
+            pass
+            # nothing I guess
 
 ####################
 # Helper Functions #
