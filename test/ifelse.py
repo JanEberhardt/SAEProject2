@@ -5,7 +5,7 @@ def main(x):
                 if x>4:
                     y=4
                 else:
-                    y=3
+                    y= not (x == 3)
             else:
                 y=2
         else:

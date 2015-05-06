@@ -52,6 +52,8 @@ class SymbolicEngine:
 # Analyzer #
 ############
 
+# This function now returns not only a list of states but also a value 
+# -> the evaluated value of the expresssion!
 def analyze_expr(expr, state):
     print "    -> analyze_expr()"
 
@@ -70,16 +72,19 @@ def analyze_expr(expr, state):
         #    return 0
         #return state.getSym(expr.id)
         ret = []
-        ret.append(state)
-        return ret
+        fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
+        ret.append( (state, run_expr(expr, fnc)) )
+        return ret 
 
     if type(expr) == ast.Num:
         #Theres nothing left to do here!
         #assert (isinstance(expr.n, numbers.Integral))
         #return expr.n
         ret = []
-        ret.append(state)
-        return ret
+        print type(state)
+        fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
+        ret.append( (state, run_expr(expr, fnc)) )
+        return ret 
 
     #TODO: Totally fine as long as each expr just returns one state
     #Just do it on the crossproduct man!
@@ -105,65 +110,64 @@ def analyze_expr(expr, state):
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
-            notStates = analyze_expr(expr.operand, state)
-            for notState in notStates:
-                #TODO:
-                #what now? How do I not a state??? 
-                break
-            return notStates
+            retValStates = analyze_expr(expr.operand, state)
+            for index, tp in enumerate(retValStates):
+                left, right = tp
+                retValStates[index] = (left, Not(right))
+            return retValStates
+
         if type(expr.op) == ast.USub:
             return -analyze_expr(expr.operand, state)
 
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
-        left_states = analyze_expr(expr.left, state)
-        assert(len(left_states) > 0)
+        leftStateVals = analyze_expr(expr.left, state)
+        #left_states = analyze_expr(expr.left, state)
         op = expr.ops[0]
-        right_states = analyze_expr(expr.comparators[0], state)
-        assert(len(left_states) > 0)
+        rightStateVals = analyze_expr(expr.comparators[0], state)
+        #right_states = analyze_expr(expr.comparators[0], state)
 
         # Now that we got the states, lets figure out the actual value of the expression
         # in each case...
-        left_values = []
-        for left_state in left_states:
-            fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
-            left_values.append(run_expr(expr.left, fnc))
-        right_values = []
-        for right_state in right_states:
-            fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
-            right_values.append(run_expr(expr.comparators[0], fnc))
-        assert(len(left_values) == len(left_states))
-        assert(len(right_values) == len(right_states))
+        #left_values = []
+        #for left_state in left_states:
+        #    fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
+        #    left_values.append(run_expr(expr.left, fnc))
+        #right_values = []
+        #for right_state in right_states:
+        #    fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
+        #    right_values.append(run_expr(expr.comparators[0], fnc))
+        #assert(len(left_values) == len(left_states))
+        #assert(len(right_values) == len(right_states))
         
         # Let's build the states that we want to return...
         #TODO this could somewhere be done generically, since we will use this again 
         # and again...
-        returnStates = []
-        for i in range(0, len(left_values)):
-            for j in range(0, len(right_values)):
-                e1 = left_values[i]
-                e2 = right_values[i]
+        retValStates = []
+        for i in range(0, len(leftStateVals)):
+            for j in range(0, len(rightStateVals)):
+                e1 = leftStateVals[i][1]
+                e2 = rightStateVals[j][1]
                 if type(op) == ast.Eq:
-                    pconstr = (e1 == e2)
+                    ret = (e1 == e2)
                 if type(op) == ast.NotEq:
-                    pconstr =  (e1 != e2)
+                    ret =  (e1 != e2)
                 if type(op) == ast.Gt:
-                    pconstr = (e1 > e2)
+                    ret = (e1 > e2)
                 if type(op) == ast.GtE:
-                    pconstr = (e1 >= e2)
+                    ret = (e1 >= e2)
                 if type(op) == ast.Lt:
-                    pconstr = (e1 < e2)
+                    ret = (e1 < e2)
                 if type(op) == ast.LtE:
-                    pconstr = (e1 <= e2)
+                    ret = (e1 <= e2)
+                #TODO: Merge left and right state!
                 newState = state.copy()
-                newState.addConstr(pconstr)
-                returnStates.append(newState)
-        assert(len(returnStates) > 0)
-        for returnState in returnStates:
-            returnState.printMe() 
-        return returnStates
+                #newState.addConstr(pconstr)
+                retValStates.append((newState, ret))
+        return retValStates
 
+    #TODO
     if type(expr) == ast.BoolOp:
         if type(expr.op) == ast.And:
             r = True
@@ -176,6 +180,7 @@ def analyze_expr(expr, state):
                 r = r or analyze_expr(v, state)
             return r
 
+    #TODO
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
 
@@ -192,7 +197,6 @@ def analyze_expr(expr, state):
             returnStates.append(state.mergeWithState(analyzerReturn))
         #TODO: This expression now returns multiple states!
         #TODO: How to handle the return stuff???
-        return returnStates
 
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
@@ -200,30 +204,42 @@ def analyze_stmt(stmt, state):
     print "  -> analyze_stmt()" 
 
     if type(stmt) == ast.Return:
-        state.returned = True
-        state.return_val = analyze_expr(stmt.value, state)
         returnStates = []
-        returnStates.append(state)
+        # This contains a list of states and a list of return values!
+        statesVals = analyze_expr(stmt.value, state)
+        for stateVal in statesVals:
+            tempState = stateVal[0]
+            tempState.return_val = stateVal[1]
+            tempState.returned = True
+            returnStates.append(stateVal[0])
         return returnStates
 
     #TODO
     if type(stmt) == ast.If:
-        true_states = analyze_expr(stmt.test, state)
+        returnStates = []
+        #True case
+        trueStateVals = analyze_expr(stmt.test, state)
+        for trueStateVal in trueStateVals:
+            tempState = trueStateVal[0]
+            tempState.addConstr(trueStateVal[1])
+            returnStates.extend(analyze_body(stmt.body, tempState))  
+        #False case
         false_test_ast = ast.UnaryOp()
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
-        false_states = analyze_expr(false_test_ast, state)
-        
-        returnStates = []
-        for true_state in true_states:
-            returnStates.extend(analyze_body(stmt.body, true_state))
-        for false_state in false_states:
-            returnStates.extend(analyze_body(stmt.orelse, false_state))
-        return returnStates
+        falseStateVals = analyze_expr(false_test_ast, state)
+        print falseStateVals[0][1]
+        for falseStateVal in falseStateVals:
+            tempState = falseStateVal[0]
+            tempState.addConstr(falseStateVal[1])
+            returnStates.extend(analyze_body(stmt.body, tempState))  
+        return returnStates 
 
     if type(stmt) == ast.Assign:
         assert (len(stmt.targets) == 1)  # Disallow a=b=c syntax
         lhs = stmt.targets[0]
+        stateVals = analyze_expr(stmt.value, state)
+        returnStates = []
         rhs = analyze_expr(stmt.value, state)
 
         #TODO
@@ -237,10 +253,11 @@ def analyze_stmt(stmt, state):
             return
         # Standard Case
         if type(lhs) == ast.Name:
-            state.addSym(lhs.id, rhs)
-            returnStates = []
-            returnStates.append(state)
-            #print "assigment is now returning "+str(len(returnStates))+" state(s)"
+            for stateVal in stateVals:
+                tempState = stateVal[0]
+                fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
+                tempState.addSym(lhs.id, run_expr(stmt.value, fnc))
+                returnStates.append(tempState) 
             return returnStates
         
     if type(stmt) == ast.Assert:
