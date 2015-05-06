@@ -3,7 +3,7 @@ def main(x):
         if x>2:
             if x>3:
                 if x>4:
-                    y=4
+                    return 4
                 else:
                     y= not (x == 3)
             else:

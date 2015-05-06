@@ -72,6 +72,7 @@ def analyze_expr(expr, state):
         #    return 0
         #return state.getSym(expr.id)
         ret = []
+        assert(not state.returned)
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
         ret.append( (state, run_expr(expr, fnc)) )
         return ret 
@@ -81,7 +82,6 @@ def analyze_expr(expr, state):
         #assert (isinstance(expr.n, numbers.Integral))
         #return expr.n
         ret = []
-        print type(state)
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
         ret.append( (state, run_expr(expr, fnc)) )
         return ret 
@@ -208,6 +208,7 @@ def analyze_stmt(stmt, state):
         # This contains a list of states and a list of return values!
         statesVals = analyze_expr(stmt.value, state)
         for stateVal in statesVals:
+            assert(not stateVal[0].returned)
             tempState = stateVal[0]
             tempState.return_val = stateVal[1]
             tempState.returned = True
@@ -228,11 +229,10 @@ def analyze_stmt(stmt, state):
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
         falseStateVals = analyze_expr(false_test_ast, state)
-        print falseStateVals[0][1]
         for falseStateVal in falseStateVals:
             tempState = falseStateVal[0]
             tempState.addConstr(falseStateVal[1])
-            returnStates.extend(analyze_body(stmt.body, tempState))  
+            returnStates.extend(analyze_body(stmt.orelse, tempState))  
         return returnStates 
 
     if type(stmt) == ast.Assign:
