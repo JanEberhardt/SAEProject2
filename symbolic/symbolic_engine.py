@@ -36,8 +36,9 @@ class SymbolicEngine:
         for finalState in finalStates:
             finalState.solve()
             inputs = finalState.inputs
-            fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
-            ret = fe.eval()
+            ret = finalState.returnValue
+            #fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
+            #ret = fe.eval()
             input_to_ret.append((finalState.inputs, ret))
 
         ### End stuff we added
@@ -190,16 +191,31 @@ def analyze_expr(expr, state):
         inputs = {}
         assert (len(expr.args) == len(f.args.args))
         # Evaluates all function arguments
+        
+        #for i in range(0, len(expr.args)):
+        #    inputs[f.args.args[i].id][0][1] = analyze_expr(expr.args[i], state)
         for i in range(0, len(expr.args)):
-            inputs[f.args.args[i].id] = analyze_expr(expr.args[i], state)
+            #TODO what if analyze_expr return multiple things here?
+            # Loop again here!!!
+            inputs[f.args.args[i].id] = analyze_expr(expr.args[i], state)[0][1] 
         
         fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
-        fnc_a.analyze()
-        returnStates = []
-        for analyzerReturn in fnc_a.analyzerStates:
-            returnStates.append(state.mergeWithState(analyzerReturn))
-        #TODO: This expression now returns multiple states!
-        #TODO: How to handle the return stuff???
+        finalStates = fnc_a.analyze()
+        retValStates = []
+        for finalState in finalStates:
+            # TODO: Get all the constraints or only the constraints 
+            # that contain the input variable? 
+            constraintsToAdd = finalState.pconstrs
+            # Get all the constraints that contain one of the input variables:
+            #constraintsToAdd = finalState.getConstrsOfVars(f.args.args)
+            print "constrinats to add: "+str(constraintsToAdd)
+            
+            temp = state.copy()
+            for constr in constraintsToAdd:
+                temp.addConstr(constr)
+            print "returnValue: "+str(finalState.returnValue)
+            retValStates.append((temp, finalState.returnValue))    
+        return retValStates
 
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
@@ -213,12 +229,12 @@ def analyze_stmt(stmt, state):
         for stateVal in statesVals:
             assert(not stateVal[0].returned)
             tempState = stateVal[0]
-            tempState.return_val = stateVal[1]
+            tempState.returnValue = stateVal[1]
+            print "return_val: "+str(tempState.returnValue)
             tempState.returned = True
             returnStates.append(stateVal[0])
         return returnStates
 
-    #TODO
     if type(stmt) == ast.If:
         returnStates = []
         #True case
@@ -294,12 +310,14 @@ def analyze_stmt(stmt, state):
 
 def analyze_body(body, state):
     print >> sys.stderr, "-> anaylze_body()"
-    states = []
-    states.append(state)
+    states = [state]
     for stmt in body:
         newStates = []
         for tmpState in states:
-            newStates.extend(analyze_stmt(stmt, tmpState))
+            if tmpState.returned:
+                newStates.append(tmpState)
+            else:
+                newStates.extend(analyze_stmt(stmt, tmpState))
         states = newStates
     return states
 
@@ -469,13 +487,18 @@ class FunctionAnalyzer:
         self.f = f
 
     def analyze(self):
-        print >> sys.stderr, "FunctionAnalyzer.analyze()"
+        print >> sys.stderr, ""
+        print >> sys.stderr, "FunctionAnalyzer.analyze() function: "+str(self.f.name)
 
         initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
 
-        for key in self.mainFunctionInputs:
-            initialState.addSym(key, Int(key))
+        if self.f.name == 'main':
+            for key in self.mainFunctionInputs:
+                initialState.addSym(key, Int(key))
+        else:
+            for key in self.mainFunctionInputs:
+                initialState.addSym(key, self.mainFunctionInputs[key])
 
         print >> sys.stderr, "Initial Symstore: "+str(initialState.symstore)
 
@@ -487,6 +510,7 @@ class FunctionAnalyzer:
 
         for state in self.analyzerStates:
             state.printMe()
+            print "  returnValue: "+str(state.returnValue)
 
         # Only return the States that did return (in the actual function)
         returnStates = []
@@ -537,6 +561,7 @@ class AnalyzerState:
         newState.inputs = self.inputs.copy()
         newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.copy(self.pconstrs)
+        newState.returnValue = copy.copy(self.returnValue)
         return newState
     
     def mergeWithState(self, otherState):
@@ -547,15 +572,22 @@ class AnalyzerState:
             mergedState.addConstr(pc)
         return mergedState
 
+    def getConstrsOfVars(self, vars):
+        constraints = []
+        for pconst in self.pconstrs:
+            if containsAllElements(vars, get_vars(pconst)):
+                constraints.append(pconst)
+        return constraints
+
     def solve(self):
         assert (self.returned)
         for pconstr in self.pconstrs:
             self.solver.add(pconstr)
         if str(self.solver.check()) == "sat":
             model = self.solver.model()
-            print >> sys.stderr, "model: " + str(model)
+            print >> sys.stderr, "SMT solver model: " + str(model)
             for key in model:
-                self.symstore[key] = int(str(model[key]))
+                self.inputs[str(key)] = int(str(model[key]))
             self.solved = True 
         else:
             pass
@@ -586,3 +618,41 @@ def find_function(p, function_name):
         if type(x) == ast.FunctionDef and x.name == function_name:
             return x
     raise LookupError('Function %s not found' % function_name)
+
+# Extracts variables used from a Z3 expression
+# Taken from http://z3.codeplex.com/SourceControl/changeset/view/fbce8160252d#src/api/python/z3util.py
+def get_vars(f):
+    r = set()
+    def collect(f):
+        if is_const(f):
+            if f.decl().kind() == Z3_OP_UNINTERPRETED and not askey(f) in r:
+                r.add(askey(f))
+        else:
+            for c in f.children():
+                collect(c)
+    collect(f)
+    return [str(var.n) for var in r]
+
+# Wrapper for allowing Z3 ASTs to be stored into Python Hashtables.
+class AstRefKey:
+    def __init__(self, n):
+        self.n = n
+    def __hash__(self):
+        return self.n.hash()
+    def __eq__(self, other):
+        return self.n.eq(other.n)
+    def __repr__(self):
+        return str(self.n)
+
+def askey(n):
+    assert isinstance(n, AstRef)
+    return AstRefKey(n)
+
+def containsAllElements(list1, list2): 
+    # Returns True if first list contiains every element of second list
+    for l2 in list2:
+        if l2 in list1:
+            continue
+        else:
+            return True
+    return True 

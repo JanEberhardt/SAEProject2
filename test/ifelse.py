@@ -5,7 +5,7 @@ def main(x):
                 if x>4:
                     return 4
                 else:
-                    y= not (x == 3)
+                    y= 3
             else:
                 y=2
         else:
@@ -13,3 +13,6 @@ def main(x):
     else:
         y=0
     return y
+
+def expected_result():
+    return [0, 1, 2, 3, 4]
