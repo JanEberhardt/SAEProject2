@@ -35,6 +35,8 @@ class SymbolicEngine:
         # inputs...
         for finalState in finalStates:
             finalState.solve()
+            if not finalState.solved:
+                continue
             inputs = finalState.inputs
             ret = finalState.returnValue
             #fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
@@ -93,24 +95,38 @@ def analyze_expr(expr, state):
     #TODO: Totally fine as long as each expr just returns one state
     #Just do it on the crossproduct man!
     if type(expr) == ast.BinOp:
-        if type(expr.op) == ast.Add:
-            return analyze_expr(expr.left, state) + analyze_expr(expr.right, state)
-        if type(expr.op) == ast.Sub:
-            return analyze_expr(expr.left, state) - analyze_expr(expr.right, state)
-        if type(expr.op) == ast.Mult:
-            return analyze_expr(expr.left, state) * analyze_expr(expr.right, state)
-        if type(expr.op) == ast.Div:
-            return analyze_expr(expr.left, state) / analyze_expr(expr.right, state)
-        if type(expr.op) == ast.Mod:
-            return analyze_expr(expr.left, state) % analyze_expr(expr.right, state)
-        if type(expr.op) == ast.Pow:
-            return analyze_expr(expr.left, state) ** analyze_expr(expr.right, state)
+        leftStateVals = analyze_expr(expr.left, state)
+        rightStateVals = analyze_expr(expr.right, state)
+        retValStates = []
+        for i in range(0, len(leftStateVals)):
+            for j in range(0, len(rightStateVals)):
+                e1 = leftStateVals[i][1]
+                e2 = rightStateVals[j][1]
 
-        # Evaluate only with constants
-        if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
-            return analyze_expr(expr.left, state) << analyze_expr(expr.right, state)
-        if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
-            return analyze_expr(expr.left, state) >> analyze_expr(expr.right, state)
+                if type(expr.op) == ast.Add:
+                    ret = e1 + e2
+                if type(expr.op) == ast.Sub:
+                    ret = e1 - e2
+                if type(expr.op) == ast.Mult:
+                    ret = e1 * e2
+                if type(expr.op) == ast.Div:
+                    ret = e1 / e2
+                if type(expr.op) == ast.Mod:
+                    ret = e1 % e2
+                if type(expr.op) == ast.Pow:
+                    ret = e1 ** e2
+
+                # Evaluate only with constants
+                # TODO
+                if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
+                    ret = e1 << e2
+                if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
+                    ret = e1 >> e2
+                newState = leftStateVals[i][0].copy()
+                newState.mergeWithState(rightStateVals[i][0].copy())
+                retValStates.append((newState, ret))
+        return retValStates
+
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
@@ -188,26 +204,52 @@ def analyze_expr(expr, state):
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
 
-        inputs = {}
         assert (len(expr.args) == len(f.args.args))
         # Evaluates all function arguments
         
         #for i in range(0, len(expr.args)):
         #    inputs[f.args.args[i].id][0][1] = analyze_expr(expr.args[i], state)
+        inputsStateValsDict = {}
         for i in range(0, len(expr.args)):
-            #TODO what if analyze_expr return multiple things here?
-            # Loop again here!!!
-            inputs[f.args.args[i].id] = analyze_expr(expr.args[i], state)[0][1] 
+            # Since an expression can return multiple states (function call) we need to
+            # again loop here -> and afterwards doing the crossproduct of all the states...
+            key = f.args.args[i].id
+            inputsStateValsDict[key] = []
+            stateVals = analyze_expr(expr.args[i], state)
+            for stateVal in stateVals:
+                inputsStateValsDict[key].append(stateVal)
+        # Now that we have all the states of the subexpressions let figure out the actual input values!
+        print "inputsStateValsDict:"
+        print inputsStateValsDict
+        #TODO
         
-        fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
-        finalStates = fnc_a.analyze()
+        inputsList = []
+        #Again doing some crossproduct stuff here:
+        for key in inputsStateValsDict:
+            if len(inputsList) == 0:
+                temp = {}
+                for whatever in inputsStateValsDict[key]:
+                    temp[key] = whatever[1]
+                inputsList = [temp]
+                continue
+            for inputs in inputsList:
+                for whatever in inputsStateValsDict[key]:
+                    inputs[key] = whatever[1]
+        print "now we have the following inputs of length "+str(len(inputsList))
+        print inputsList
+
+        finalStates = []
+        for inputs in inputsList:
+            fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
+            finalStates.extend(fnc_a.analyze())
+
         retValStates = []
         for finalState in finalStates:
             # TODO: Get all the constraints or only the constraints 
             # that contain the input variable? 
-            constraintsToAdd = finalState.pconstrs
+            # constraintsToAdd = finalState.pconstrs
             # Get all the constraints that contain one of the input variables:
-            #constraintsToAdd = finalState.getConstrsOfVars(f.args.args)
+            constraintsToAdd = finalState.getConstrsOfVars(f.args.args)
             print "constrinats to add: "+str(constraintsToAdd)
             
             temp = state.copy()
@@ -230,7 +272,6 @@ def analyze_stmt(stmt, state):
             assert(not stateVal[0].returned)
             tempState = stateVal[0]
             tempState.returnValue = stateVal[1]
-            print "return_val: "+str(tempState.returnValue)
             tempState.returned = True
             returnStates.append(stateVal[0])
         return returnStates
@@ -488,7 +529,7 @@ class FunctionAnalyzer:
 
     def analyze(self):
         print >> sys.stderr, ""
-        print >> sys.stderr, "FunctionAnalyzer.analyze() function: "+str(self.f.name)
+        print >> sys.stderr, "FunctionAnalyzer.analyze( function:"+str(self.f.name)+" )"
 
         initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
@@ -567,6 +608,7 @@ class AnalyzerState:
     def mergeWithState(self, otherState):
         mergedState = self.copy()
         for sym in otherState.symstore:
+            assert(self.getSym(sym) == otherState.getSym(sym))
             mergedState.addSym(sym, otherState.getSym(sym))
         for pc in otherState.pconstrs:
             mergedState.addConstr(pc)
@@ -590,7 +632,8 @@ class AnalyzerState:
                 self.inputs[str(key)] = int(str(model[key]))
             self.solved = True 
         else:
-            pass
+            print "found model that contains contradictions -> cannot be solved..."
+            
             # nothing I guess
 
 ####################
