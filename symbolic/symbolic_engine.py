@@ -79,7 +79,7 @@ def analyze_expr(expr, state):
         for states in crossProducts:
             tempState = states[0][0].copy()
             for i in range(1, len(states)):
-                tempState = tempState.mergeWithState(states[i][0].copy)
+                tempState = tempState.mergeWithState(states[i][0].copy())
             fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
             retValStates.append((tempState, run_expr(expr, fnc)))
         return retValStates
