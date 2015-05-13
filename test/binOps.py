@@ -13,6 +13,10 @@ def main(z):
         r= x%y
     elif z==6:
         r= x**y
+    elif z==7:
+        r = 16 << 1
+    elif z==8:
+        r = 128 >> 1
     else:
         r= 0
 
@@ -21,4 +25,4 @@ def main(z):
     return r
 
 def expected_result():
-    return [6, -2, 8, 2, 2, 16, -52]
+    return [6, -2, 8, 2, 2, 16, -52, 32, 64]

@@ -46,7 +46,6 @@ class SymbolicEngine:
         ### End stuff we added
 
 
-        #TODO What about assertions????
         assetion_violations_to_input = {}
         for finalState in finalStates:
             assetion_violations_to_input.update(finalState.violated_assertions)
@@ -61,43 +60,43 @@ class SymbolicEngine:
 # This function now returns not only a list of states but also a value 
 # -> the evaluated value of the expresssion!
 def analyze_expr(expr, state):
-    print >> sys.stderr, "    -> analyze_expr()"
+    #print >> sys.stderr, "    -> analyze_expr()"
 
     #TODO
     if type(expr) == ast.Tuple:
-        r = []
+        # Collect a list of lists of all possible states...
+        listOfLists = []
         for el in expr.elts:
-            r.append(run_expr(el, fnc))
-        return tuple(r)
+            listOfLists.append(analyze_expr(el, state))
+        # Take the crossproduct of it and merge the states...
+        crossProducts = crossProduct(listOfLists)
+        retValStates = []
+        for states in crossProducts:
+            tempState = states[0][0].copy()
+            for i in range(1, len(states)):
+                tempState = tempState.mergeWithState(states[i][0].copy)
+            fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
+            retValStates.append((tempState, run_expr(expr, fnc)))
+        return retValStates
 
     if type(expr) == ast.Name:
-        #Theres nothing left to do here!
-        #if expr.id == 'True':
-        #    return 1
-        #elif expr.id == 'False':
-        #    return 0
-        #return state.getSym(expr.id)
-        ret = []
         assert(not state.returned)
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
-        ret.append( (state, run_expr(expr, fnc)) )
-        return ret 
+        ret = (state, run_expr(expr, fnc)) 
+        return [ret] 
 
     if type(expr) == ast.Num:
-        #Theres nothing left to do here!
-        #assert (isinstance(expr.n, numbers.Integral))
-        #return expr.n
+        assert (isinstance(expr.n, numbers.Integral))
         ret = []
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
         ret.append( (state, run_expr(expr, fnc)) )
         return ret 
 
-    #TODO: Totally fine as long as each expr just returns one state
-    #Just do it on the crossproduct man!
     if type(expr) == ast.BinOp:
         leftStateVals = analyze_expr(expr.left, state)
         rightStateVals = analyze_expr(expr.right, state)
         retValStates = []
+        # Doing cross-product here
         for i in range(0, len(leftStateVals)):
             for j in range(0, len(rightStateVals)):
                 e1 = leftStateVals[i][1]
@@ -117,17 +116,19 @@ def analyze_expr(expr, state):
                     ret = e1 ** e2
 
                 # Evaluate only with constants
-                # TODO
                 if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 << e2
                 if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 >> e2
-                newState = leftStateVals[i][0].copy()
-                newState.mergeWithState(rightStateVals[i][0].copy())
+
+                newState = state.copy()
+                newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                newState = newState.mergeWithState(rightStateVals[j][0].copy())
                 retValStates.append((newState, ret))
         return retValStates
 
 
+    #TODO Something is wrong here: see notTest.py
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
             retValStates = analyze_expr(expr.operand, state)
@@ -135,7 +136,7 @@ def analyze_expr(expr, state):
                 left, right = tp
                 retValStates[index] = (left, Not(right))
             return retValStates
-
+        # Also not implemented yet...
         if type(expr.op) == ast.USub:
             return -analyze_expr(expr.operand, state)
 
@@ -143,32 +144,19 @@ def analyze_expr(expr, state):
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
         leftStateVals = analyze_expr(expr.left, state)
-        #left_states = analyze_expr(expr.left, state)
         op = expr.ops[0]
         rightStateVals = analyze_expr(expr.comparators[0], state)
-        #right_states = analyze_expr(expr.comparators[0], state)
-
-        # Now that we got the states, lets figure out the actual value of the expression
-        # in each case...
-        #left_values = []
-        #for left_state in left_states:
-        #    fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
-        #    left_values.append(run_expr(expr.left, fnc))
-        #right_values = []
-        #for right_state in right_states:
-        #    fnc = FunctionEvaluator(None, left_state.ast_root, left_state.symstore)
-        #    right_values.append(run_expr(expr.comparators[0], fnc))
-        #assert(len(left_values) == len(left_states))
-        #assert(len(right_values) == len(right_states))
         
+        # TODO: special case with tuples!
         # Let's build the states that we want to return...
-        #TODO this could somewhere be done generically, since we will use this again 
-        # and again...
+        # Doing the cross-product
         retValStates = []
         for i in range(0, len(leftStateVals)):
             for j in range(0, len(rightStateVals)):
                 e1 = leftStateVals[i][1]
+                print(e1)
                 e2 = rightStateVals[j][1]
+                print(e2)
                 if type(op) == ast.Eq:
                     ret = (e1 == e2)
                 if type(op) == ast.NotEq:
@@ -181,9 +169,10 @@ def analyze_expr(expr, state):
                     ret = (e1 < e2)
                 if type(op) == ast.LtE:
                     ret = (e1 <= e2)
-                #TODO: Merge left and right state!
+                print ret
                 newState = state.copy()
-                #newState.addConstr(pconstr)
+                newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                newState = newState.mergeWithState(rightStateVals[j][0].copy())
                 retValStates.append((newState, ret))
         return retValStates
 
@@ -200,15 +189,12 @@ def analyze_expr(expr, state):
                 r = r or analyze_expr(v, state)
             return r
 
-    #TODO
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
 
         assert (len(expr.args) == len(f.args.args))
-        # Evaluates all function arguments
         
-        #for i in range(0, len(expr.args)):
-        #    inputs[f.args.args[i].id][0][1] = analyze_expr(expr.args[i], state)
+        #First we need to analyze all the function arguments
         inputsStateValsDict = {}
         for i in range(0, len(expr.args)):
             # Since an expression can return multiple states (function call) we need to
@@ -218,51 +204,50 @@ def analyze_expr(expr, state):
             stateVals = analyze_expr(expr.args[i], state)
             for stateVal in stateVals:
                 inputsStateValsDict[key].append(stateVal)
-        # Now that we have all the states of the subexpressions let figure out the actual input values!
-        print "inputsStateValsDict:"
-        print inputsStateValsDict
-        #TODO
+
+        # Now that we have all the states of the function arguments let's 
+        # figure out the actual input values!
         
-        inputsList = []
-        #Again doing some crossproduct stuff here:
+        # Let's build a list with all the crossproducts of the inputs
+        listOfLists = []
         for key in inputsStateValsDict:
-            if len(inputsList) == 0:
-                temp = {}
-                for whatever in inputsStateValsDict[key]:
-                    temp[key] = whatever[1]
-                inputsList = [temp]
-                continue
-            for inputs in inputsList:
-                for whatever in inputsStateValsDict[key]:
-                    inputs[key] = whatever[1]
+            listOfLists.append(inputsStateValsDict[key])
+        cpList = crossProduct(listOfLists)
+        keys = inputsStateValsDict.keys()
+
+        # Build the actual inputs
+        inputsList = []
+        for lst in cpList:
+            tempInput = {}
+            assert(len(keys) == len(lst))
+            for i in range(len(keys)):
+                tempInput[keys[i]] = lst[i][1]
+            inputsList.append(tempInput)
         print "now we have the following inputs of length "+str(len(inputsList))
         print inputsList
 
+        # Run the analyzer on each possible input combination an store 
+        # all the possible resulting states in a list
         finalStates = []
         for inputs in inputsList:
             fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
             finalStates.extend(fnc_a.analyze())
 
+        # Go over the resulting states and merge the contrains wich we need with 'state' 
         retValStates = []
         for finalState in finalStates:
-            # TODO: Get all the constraints or only the constraints 
-            # that contain the input variable? 
-            # constraintsToAdd = finalState.pconstrs
-            # Get all the constraints that contain one of the input variables:
+            # Get only the constraints that contain the input variableables:
             constraintsToAdd = finalState.getConstrsOfVars(f.args.args)
-            print "constrinats to add: "+str(constraintsToAdd)
-            
             temp = state.copy()
             for constr in constraintsToAdd:
                 temp.addConstr(constr)
-            print "returnValue: "+str(finalState.returnValue)
             retValStates.append((temp, finalState.returnValue))    
         return retValStates
 
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
 def analyze_stmt(stmt, state):
-    print >> sys.stderr, "  -> analyze_stmt()" 
+    #print >> sys.stderr, "  -> analyze_stmt()" 
 
     if type(stmt) == ast.Return:
         returnStates = []
@@ -280,6 +265,9 @@ def analyze_stmt(stmt, state):
         returnStates = []
         #True case
         trueStateVals = analyze_expr(stmt.test, state)
+        print "trueStateVals:"
+        print trueStateVals
+        trueStateVals[0][0].printMe()
         for trueStateVal in trueStateVals:
             tempState = trueStateVal[0]
             tempState.addConstr(trueStateVal[1])
@@ -289,6 +277,8 @@ def analyze_stmt(stmt, state):
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
         falseStateVals = analyze_expr(false_test_ast, state)
+        print "falseStateVals:"
+        print falseStateVals
         for falseStateVal in falseStateVals:
             tempState = falseStateVal[0]
             tempState.addConstr(falseStateVal[1])
@@ -304,13 +294,17 @@ def analyze_stmt(stmt, state):
 
         #TODO
         if type(lhs) == ast.Tuple:
-            assert (type(rhs) == tuple)
-            assert (len(rhs) == len(lhs.elts))
-            for el_index in range(len(lhs.elts)):
-                el = lhs.elts[el_index]
-                assert (type(el) == ast.Name)
-                fnc.state[el.id] = rhs[el_index]
-            return
+            print "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+            returnStates = []
+            for stateVal in stateVals:
+                tempState = stateVal[0]
+                fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
+                for el_index in range(len(lhs.elts)):
+                    el = lhs.elts[el_index]
+                    tempState.addSym(el.id, run_expr(stmt.value, fnc)[el_index])
+                returnStates.append(tempState) 
+            return returnStates
+
         # Standard Case
         if type(lhs) == ast.Name:
             for stateVal in stateVals:
@@ -340,23 +334,27 @@ def analyze_stmt(stmt, state):
             state2.returned = True
             state2.solve()
             
-            if state2.solved:
-                state.violated_assertions[stmt] = state2.inputs
-                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(state2.inputs)
-                break
+       #     if state2.solved:
+            state.violated_assertions[stmt] = state2.inputs
+            print >> sys.stderr, "Found the following violating inputs for assertion: "+str(state2.inputs)
+            break
         
         return [state]
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
 def analyze_body(body, state):
-    print >> sys.stderr, "-> anaylze_body()"
+    #print >> sys.stderr, "-> anaylze_body()"
     states = [state]
     for stmt in body:
         newStates = []
         for tmpState in states:
             if tmpState.returned:
                 newStates.append(tmpState)
+            # Here I direclty throw away all the states that contain contradictions in 
+            # their pconstr!
+            elif tmpState.hasContradictions:
+                pass
             else:
                 newStates.extend(analyze_stmt(stmt, tmpState))
         states = newStates
@@ -576,22 +574,39 @@ class AnalyzerState:
 
         self.returned = False
         self.returnValue = None
+        self.hasContradictions = False
         self.solved = False
         self.solver = Solver()
         self.ast_root = ast_root 
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
-        print >> sys.stderr, "         updated or added something in the symstore..."
-        print >> sys.stderr, "         current state.symstore: " + str(self.symstore)
+        #print >> sys.stderr, "         updated or added something in the symstore..."
+        #print >> sys.stderr, "         current state.symstore: " + str(self.symstore)
 
     def getSym(self, var):
         return self.symstore[var]
     
     def addConstr(self, constr):
+        # Check if 'constr' is not trivial (like true false)
+        if type(constr) is bool:
+            if constr == True:
+                return
+            elif constr == False:
+                self.hasContradictions = True
+                return
+        if constr.eq(Not(True)):
+            self.hasContradictions = True
+            return
+        if constr.eq(Not(False)):
+            return
+        # Check if this constraint doesn't exist yet:
+        for pconst in self.pconstrs:
+            if constr.eq(pconst):
+                return
         self.pconstrs.append(constr)
-        print >> sys.stderr, "         updated or added something to the pconstrs..."
-        print >> sys.stderr, "         current state.pconstrs: " + str(self.pconstrs)
+        print "added or changed something in the symstore:"
+        self.printMe()
 
     def printMe(self):
         print >> sys.stderr, "State:"
@@ -603,21 +618,22 @@ class AnalyzerState:
         newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.copy(self.pconstrs)
         newState.returnValue = copy.copy(self.returnValue)
+        newState.hasContradictions = copy.copy(self.hasContradictions)
         return newState
     
     def mergeWithState(self, otherState):
         mergedState = self.copy()
         for sym in otherState.symstore:
             assert(self.getSym(sym) == otherState.getSym(sym))
-            mergedState.addSym(sym, otherState.getSym(sym))
         for pc in otherState.pconstrs:
             mergedState.addConstr(pc)
         return mergedState
 
-    def getConstrsOfVars(self, vars):
+    def getConstrsOfVars(self, variables):
         constraints = []
         for pconst in self.pconstrs:
-            if containsAllElements(vars, get_vars(pconst)):
+            assert not (type(pconst) is bool)
+            if containsAllElements(variables, get_vars(pconst)):
                 constraints.append(pconst)
         return constraints
 
@@ -699,3 +715,25 @@ def containsAllElements(list1, list2):
         else:
             return True
     return True 
+
+# becomes as an argument a list of lists and returns all possible combinations:
+# ex: crossProduct([[a,b,c],[d,e]]) returns [[a,d], [a,e], [b,d], [b,e], [c,d],[c,d]]
+def crossProduct(listOfLists):
+    if len(listOfLists)<2:
+        return listOfLists
+
+    temp =[]
+    for t in listOfLists[0]:
+        temp.append([t])
+    for i in range(1, len(listOfLists[0])):
+        temp = crossProductHelper(temp, listOfLists[i])
+    return temp
+
+def crossProductHelper(left, right):
+    result = []
+    for i in range(len(left)):
+        for j in range(len(right)):
+            temp = copy.copy(left[i])
+            temp.append(copy.copy(right[j]))
+            result.append(temp)
+    return result
