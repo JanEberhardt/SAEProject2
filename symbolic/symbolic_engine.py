@@ -719,21 +719,13 @@ def containsAllElements(list1, list2):
 # becomes as an argument a list of lists and returns all possible combinations:
 # ex: crossProduct([[a,b,c],[d,e]]) returns [[a,d], [a,e], [b,d], [b,e], [c,d],[c,d]]
 def crossProduct(listOfLists):
-    if len(listOfLists)<2:
-        return listOfLists
-
-    temp =[]
-    for t in listOfLists[0]:
-        temp.append([t])
-    for i in range(1, len(listOfLists[0])):
-        temp = crossProductHelper(temp, listOfLists[i])
-    return temp
-
-def crossProductHelper(left, right):
-    result = []
-    for i in range(len(left)):
-        for j in range(len(right)):
-            temp = copy.copy(left[i])
-            temp.append(copy.copy(right[j]))
-            result.append(temp)
-    return result
+    listOfLists = [copy.copy(l) for l in listOfLists] # better copy the whole thing before we get some unwated side effects # TODO verify this
+    left = [[li] for li in listOfLists[0]]
+    for i in range(1, len(listOfLists)):
+        right = listOfLists[i]
+        nleft = []
+        for j in range(len(left)):
+            for k in range(len(right)):
+                nleft.append(left[j] + [right[k]])
+        left = nleft
+    return left
