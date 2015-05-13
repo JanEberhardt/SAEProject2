@@ -22,6 +22,7 @@ class SymbolicEngine:
         #f = FunctionEvaluator(self.fnc, self.program_ast, input)
         #ret = f.eval()
 
+
         input_to_ret = []
         #input_to_ret.append((input, ret))
         
@@ -39,8 +40,12 @@ class SymbolicEngine:
                 continue
             inputs = finalState.inputs
             ret = finalState.returnValue
-            #fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
-            #ret = fe.eval()
+            # In case we returned something weird before and the return thing still
+            # contains some symbolic stuff run over the program once again with the 
+            # evaluator
+            if not isinstance(ret, int):
+                fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
+                ret = fe.eval()
             input_to_ret.append((finalState.inputs, ret))
 
         ### End stuff we added
@@ -127,18 +132,19 @@ def analyze_expr(expr, state):
                 retValStates.append((newState, ret))
         return retValStates
 
-
-    #TODO Something is wrong here: see notTest.py
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
             retValStates = analyze_expr(expr.operand, state)
             for index, tp in enumerate(retValStates):
-                left, right = tp
-                retValStates[index] = (left, Not(right))
+                state, val = tp
+                retValStates[index] = (state, Not(val))
             return retValStates
-        # Also not implemented yet...
         if type(expr.op) == ast.USub:
-            return -analyze_expr(expr.operand, state)
+            retValStates = analyze_expr(expr.operand, state)
+            for index, tp in enumerate(retValStates):
+                state, val = tp
+                retValStates[index] = (state, -val)
+            return retValStates
 
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
@@ -154,9 +160,7 @@ def analyze_expr(expr, state):
         for i in range(0, len(leftStateVals)):
             for j in range(0, len(rightStateVals)):
                 e1 = leftStateVals[i][1]
-                print(e1)
                 e2 = rightStateVals[j][1]
-                print(e2)
                 if type(op) == ast.Eq:
                     ret = (e1 == e2)
                 if type(op) == ast.NotEq:
@@ -169,25 +173,37 @@ def analyze_expr(expr, state):
                     ret = (e1 < e2)
                 if type(op) == ast.LtE:
                     ret = (e1 <= e2)
-                print ret
                 newState = state.copy()
                 newState = newState.mergeWithState(leftStateVals[i][0].copy())
                 newState = newState.mergeWithState(rightStateVals[j][0].copy())
                 retValStates.append((newState, ret))
         return retValStates
 
-    #TODO
     if type(expr) == ast.BoolOp:
-        if type(expr.op) == ast.And:
-            r = True
+        if (type(expr.op) == ast.And) or (type(expr.op) == ast.Or):
+            expr_stateVals = []
+            # Collect a list of lists of all possible states...
             for v in expr.values:
-                r = r and analyze_expr(v, state)
-            return r
-        if type(expr.op) == ast.Or:
-            r = False
-            for v in expr.values:
-                r = r or analyze_expr(v, state)
-            return r
+                expr_stateVals.append(analyze_expr(v, state))
+            # Take the crossproduct of it
+            cpList = crossProduct(expr_stateVals)
+            retStateVals = []
+            # For each result of the crossproduct merge the states and evaluate...
+            for lst in cpList:
+                # State in which to carry out the evaluation
+                tempState = state.copy()
+                if type(expr.op) == ast.And:
+                    val = True
+                else:
+                    val = False
+                for stateVal in lst:
+                    tempState.mergeWithState(stateVal[0].copy())
+                    if type(expr.op) == ast.And:
+                        val = And(val, stateVal[1])
+                    else:
+                        val = Or(val, stateVal[1])
+                retStateVals.append((tempState, val))
+            return retStateVals
 
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
@@ -223,8 +239,6 @@ def analyze_expr(expr, state):
             for i in range(len(keys)):
                 tempInput[keys[i]] = lst[i][1]
             inputsList.append(tempInput)
-        print "now we have the following inputs of length "+str(len(inputsList))
-        print inputsList
 
         # Run the analyzer on each possible input combination an store 
         # all the possible resulting states in a list
@@ -247,8 +261,6 @@ def analyze_expr(expr, state):
     raise Exception('Unhandled expression: ' + ast.dump(expr))
 
 def analyze_stmt(stmt, state):
-    #print >> sys.stderr, "  -> analyze_stmt()" 
-
     if type(stmt) == ast.Return:
         returnStates = []
         # This contains a list of states and a list of return values!
@@ -265,9 +277,6 @@ def analyze_stmt(stmt, state):
         returnStates = []
         #True case
         trueStateVals = analyze_expr(stmt.test, state)
-        print "trueStateVals:"
-        print trueStateVals
-        trueStateVals[0][0].printMe()
         for trueStateVal in trueStateVals:
             tempState = trueStateVal[0]
             tempState.addConstr(trueStateVal[1])
@@ -277,8 +286,6 @@ def analyze_stmt(stmt, state):
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
         falseStateVals = analyze_expr(false_test_ast, state)
-        print "falseStateVals:"
-        print falseStateVals
         for falseStateVal in falseStateVals:
             tempState = falseStateVal[0]
             tempState.addConstr(falseStateVal[1])
@@ -294,7 +301,7 @@ def analyze_stmt(stmt, state):
 
         #TODO
         if type(lhs) == ast.Tuple:
-            print "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+            print "---------------FixMe FixMe FixMe FixMe FixMe-------------------------"
             returnStates = []
             for stateVal in stateVals:
                 tempState = stateVal[0]
@@ -344,7 +351,6 @@ def analyze_stmt(stmt, state):
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
 def analyze_body(body, state):
-    #print >> sys.stderr, "-> anaylze_body()"
     states = [state]
     for stmt in body:
         newStates = []
@@ -605,8 +611,8 @@ class AnalyzerState:
             if constr.eq(pconst):
                 return
         self.pconstrs.append(constr)
-        print "added or changed something in the symstore:"
-        self.printMe()
+        #print "added or changed something in the symstore:"
+        #self.printMe()
 
     def printMe(self):
         print >> sys.stderr, "State:"
@@ -725,7 +731,7 @@ def crossProduct(listOfLists):
     temp =[]
     for t in listOfLists[0]:
         temp.append([t])
-    for i in range(1, len(listOfLists[0])):
+    for i in range(1, len(listOfLists)):
         temp = crossProductHelper(temp, listOfLists[i])
     return temp
 

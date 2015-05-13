@@ -16,3 +16,5 @@ def h(x):
 def main(y):
     return f(y) + g(h(y)+h(y))
 
+def expected_result():
+    return [0, 1, 2]

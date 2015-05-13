@@ -3,6 +3,7 @@ Software Architecture and Engineering Project 2
 
 TODOS:
 ------
+- [ ] Only return path inputs if no assertion has been triggered...
 - [ ] Fix assertions!
 - [ ] Implement all the analyze_expr cases -> Attention: With the binaryOps we have to merge states somewhere, right?
 - [x] If path is unreachable solver just gives an error: "model is not available", we should just remove the path in this case...
