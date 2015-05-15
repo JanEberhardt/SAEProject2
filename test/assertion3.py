@@ -6,3 +6,6 @@ def main(x, y):
 
 def test(x, y):
     return x+y
+
+def expected_result():
+    return [1]

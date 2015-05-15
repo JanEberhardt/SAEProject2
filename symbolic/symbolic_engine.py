@@ -11,7 +11,6 @@ class SymbolicEngine:
         self.fnc = find_function(program_ast, function_name)
         self.program_ast = program_ast
 
-    # TODO: implement symbolic execution
     # The return value is a list of tuples [(input#1, ret#1), ...]
     # where input is a dictionary specifying concrete value used as input, e.g. {'x': 1, 'y': 2}
     # and ret is expected return value of the function
@@ -47,7 +46,8 @@ class SymbolicEngine:
                 fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
                 ret = fe.eval()
             input_to_ret.append((finalState.inputs, ret))
-
+        print >> sys.stderr, ""
+        print >> sys.stderr, ""
         ### End stuff we added
 
 
@@ -197,7 +197,7 @@ def analyze_expr(expr, state):
                 else:
                     val = False
                 for stateVal in lst:
-                    tempState.mergeWithState(stateVal[0].copy())
+                    tempState = tempState.mergeWithState(stateVal[0].copy())
                     if type(expr.op) == ast.And:
                         val = And(val, stateVal[1])
                     else:
@@ -322,7 +322,7 @@ def analyze_stmt(stmt, state):
             return returnStates
         
     if type(stmt) == ast.Assert:
-        # TODO: implement check whether the assertion holds. 
+        # Implement check whether the assertion holds. 
         # However do not throw exception in case the assertion does not hold.
         # Instead return inputs that trigger the violation from SymbolicEngine.explore()
 
@@ -331,22 +331,21 @@ def analyze_stmt(stmt, state):
         negation.op = ast.Not()
         negation.operand = stmt.test
 
-        # run expression
-        states_values = analyze_expr(negation, state)
-        for state, value in states_values:
-            if stmt in state.violated_assertions: continue
-
-            state2 = state.copy()
-            state2.addConstr(value)
-            state2.returned = True
-            state2.solve()
-            
-       #     if state2.solved:
-            state.violated_assertions[stmt] = state2.inputs
-            print >> sys.stderr, "Found the following violating inputs for assertion: "+str(state2.inputs)
-            break
-        
-        return [state]
+        returnStates = []
+        stateVals = analyze_expr(stmt.test, state)
+        for tempState, tempVal in stateVals:
+            assertState = tempState.copy()
+            assertState.addConstr(Not(tempVal))
+            assertState.returned = True
+            assertState.solve()
+            if assertState.solved:
+                tempState.violated_assertions[stmt] = assertState.inputs
+                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(assertState.inputs)
+            else:
+                print >> sys.stderr, "Found no inputs for assertion -> means assertion holds in this case..."
+            tempState.addConstr(tempVal)
+            returnStates.append(tempState)
+        return returnStates 
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
@@ -491,7 +490,6 @@ def run_stmt(stmt, fnc):
             return
         
     if type(stmt) == ast.Assert:
-        # TODO: implement check whether the assertion holds. 
         # However do not throw exception in case the assertion does not hold.
         # Instead return inputs that trigger the violation from SymbolicEngine.explore()
         return
@@ -509,6 +507,8 @@ class FunctionEvaluator:
     def __init__(self, f, ast_root, inputs):
         #TODO: Isn't it bad to comment out stuff that was kind of in the reference
         # solution????!!!!!!!!!!!!!!!!!
+        # TODO: Easy-fix -> just pass f to the analyzer-states and then everything is
+        # fine, but basically this is not necessary...
         #assert (type(f) == ast.FunctionDef)
         #for arg in f.args.args:
         #    assert arg.id in inputs
@@ -555,7 +555,7 @@ class FunctionAnalyzer:
 
         for state in self.analyzerStates:
             state.printMe()
-            print "  returnValue: "+str(state.returnValue)
+            print >> sys.stderr, "  returnValue: "+str(state.returnValue)
 
         # Only return the States that did return (in the actual function)
         returnStates = []
@@ -654,7 +654,7 @@ class AnalyzerState:
                 self.inputs[str(key)] = int(str(model[key]))
             self.solved = True 
         else:
-            print "found model that contains contradictions -> cannot be solved..."
+            print >> sys.stderr, "   found model that contains contradictions -> cannot be solved..."
             
             # nothing I guess
 
