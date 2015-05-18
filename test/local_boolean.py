@@ -3,7 +3,7 @@ def main(x):
 
     if y:
         return 1
-    else :
+    else:
         return 0
 
     return y

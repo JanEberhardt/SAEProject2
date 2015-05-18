@@ -8,3 +8,6 @@ def f(x):
 
 def main(y):
     return f(y)
+
+def expected_result():
+    return [1,0]

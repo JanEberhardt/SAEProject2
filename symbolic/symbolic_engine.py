@@ -85,7 +85,8 @@ def analyze_expr(expr, state):
         return retValStates
 
     if type(expr) == ast.Name:
-        assert(not state.returned)
+        #TODO: Find testcase where this assertion get's triggered...
+        #assert(not state.returned)
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
         ret = (state, run_expr(expr, fnc)) 
         return [ret] 
@@ -153,7 +154,6 @@ def analyze_expr(expr, state):
         op = expr.ops[0]
         rightStateVals = analyze_expr(expr.comparators[0], state)
         
-        # TODO: special case with tuples!
         # Let's build the states that we want to return...
         # Doing the cross-product
         retValStates = []
@@ -161,6 +161,32 @@ def analyze_expr(expr, state):
             for j in range(0, len(rightStateVals)):
                 e1 = leftStateVals[i][1]
                 e2 = rightStateVals[j][1]
+
+                #Special case for tuples:
+                if type(e1) == tuple or type(e2) == tuple:
+                    print "-----taking the tuple comparator..."
+
+                    #Case where not the same length or whatever...
+                    if type(e1) != type(e2):
+                        retValStates.append([state.copy(), False])
+                        continue
+                    if len(e1) != len(e2):
+                        retValStates.append([state.copy(), False])
+                        continue
+
+                    #Case where both tuples have same length and we need to compare them...
+                    print "---------------FixMe FixMe FixMe FixMe FixMe-------------------------"
+                    tupleCompState = state.copy()
+                    tupleCompState.mergeWithState(leftStateVals[i][0])
+                    tupleCompState.mergeWithState(rightStateVals[j][0])
+                    #TODO: Sure this always works??
+                    e1_ast = ast.parse(str(e1))
+                    e2_ast = ast.parse(str(e2))
+                    print ast.dump(e1_ast.body[0])
+                    print ast.dump(e2_ast.body[0])
+                    retValStates.append(tupleComparator(e1_ast.body[0], e2_ast.body[0], tupleCompState))
+                    continue
+
                 if type(op) == ast.Eq:
                     ret = (e1 == e2)
                 if type(op) == ast.NotEq:
@@ -199,6 +225,7 @@ def analyze_expr(expr, state):
                 for stateVal in lst:
                     tempState = tempState.mergeWithState(stateVal[0].copy())
                     if type(expr.op) == ast.And:
+                        print "-----"+str(val)+"&"+str(stateVal[1])
                         val = And(val, stateVal[1])
                     else:
                         val = Or(val, stateVal[1])
@@ -276,7 +303,8 @@ def analyze_stmt(stmt, state):
     if type(stmt) == ast.If:
         returnStates = []
         #True case
-        trueStateVals = analyze_expr(stmt.test, state)
+        trueStateVals = analyze_expr(stmt.test, state.copy())
+        trueStateVals[0][0].printMe()
         for trueStateVal in trueStateVals:
             tempState = trueStateVal[0]
             tempState.addConstr(trueStateVal[1])
@@ -285,7 +313,9 @@ def analyze_stmt(stmt, state):
         false_test_ast = ast.UnaryOp()
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
-        falseStateVals = analyze_expr(false_test_ast, state)
+        print ast.dump(false_test_ast)
+        falseStateVals = analyze_expr(false_test_ast, state.copy())
+        print "asdf"
         for falseStateVal in falseStateVals:
             tempState = falseStateVal[0]
             tempState.addConstr(falseStateVal[1])
@@ -299,9 +329,7 @@ def analyze_stmt(stmt, state):
         returnStates = []
         rhs = analyze_expr(stmt.value, state)
 
-        #TODO
         if type(lhs) == ast.Tuple:
-            print "---------------FixMe FixMe FixMe FixMe FixMe-------------------------"
             returnStates = []
             for stateVal in stateVals:
                 tempState = stateVal[0]
@@ -533,7 +561,7 @@ class FunctionAnalyzer:
 
     def analyze(self):
         print >> sys.stderr, ""
-        print >> sys.stderr, "FunctionAnalyzer.analyze( function:"+str(self.f.name)+" )"
+        print >> sys.stderr, "FunctionAnalyzer.analyze(function:"+str(self.f.name)+")"
 
         initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
@@ -545,13 +573,13 @@ class FunctionAnalyzer:
             for key in self.mainFunctionInputs:
                 initialState.addSym(key, self.mainFunctionInputs[key])
 
-        print >> sys.stderr, "Initial Symstore: "+str(initialState.symstore)
+        #print >> sys.stderr, "Initial Symstore: "+str(initialState.symstore)
 
         self.analyzerStates = analyze_body(self.f.body, initialState)
         for state in self.analyzerStates:
             assert (state.returned)
 
-        print >> sys.stderr, "function '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
+        print >> sys.stderr, "\nfunction '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
 
         for state in self.analyzerStates:
             state.printMe()
@@ -595,10 +623,17 @@ class AnalyzerState:
     
     def addConstr(self, constr):
         # Check if 'constr' is not trivial (like true false)
+        print constr
         if type(constr) is bool:
             if constr == True:
                 return
             elif constr == False:
+                self.hasContradictions = True
+                return
+        if type(constr) is int:
+            if constr == 1:
+                return
+            else:
                 self.hasContradictions = True
                 return
         if constr.eq(Not(True)):
@@ -616,7 +651,7 @@ class AnalyzerState:
 
     def printMe(self):
         print >> sys.stderr, "State:"
-        print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs) 
+        print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs)+" returnValue: "+str(self.returnValue)
 
     def copy(self):
         newState = AnalyzerState(self.ast_root)
@@ -743,3 +778,36 @@ def crossProductHelper(left, right):
             temp.append(copy.copy(right[j]))
             result.append(temp)
     return result
+
+#Compares two tuples in a symbolic way... 
+def tupleComparator(left, right, state):
+    retStateVals = []
+    monsterAndRoot = ast.BoolOp()
+    monsterAndRoot.op = ast.And()
+    tt = ast.Name()
+    tt.id = 'True'
+    monsterAndRoot.values = [tt]
+    assert(len(left.value.elts) == len(right.value.elts))
+    assert(len(left.value.elts)>0)
+    for i in range(len(left.value.elts)):
+        compare_ast = ast.Compare()
+        compare_ast.ops = [ast.Eq()]
+        #TODO: build a correct and-AST here...
+        compare_ast.left = left.value.elts[i]
+        compare_ast.comparators = [right.value.elts[i]]
+        compare_subAnd = ast.BoolOp()
+        compare_subAnd.op = ast.And()
+        compare_subAnd.values = [compare_ast]
+        if len(monsterAndRoot.values) == 1:
+            compare_subAnd.values.append(monsterAndRoot.values[0])
+            monsterAndRoot = compare_subAnd
+        else:
+            temp = copy.copy(monsterAndRoot)
+            compare_subAnd.values.append(temp)
+            monsterAndRoot = compare_subAnd
+
+    print "\n\nmonsterAnd:"
+    print ast.dump(monsterAndRoot)
+    print "\n\n"
+    return analyze_expr(monsterAndRoot, state)
+

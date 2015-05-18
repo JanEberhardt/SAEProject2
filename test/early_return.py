@@ -9,3 +9,4 @@ def main(x):
 
 def twice(x):
     return 2*x + 1
+
