@@ -1,4 +1,3 @@
-#TODO: Something's wrong here!
 def f(y):
     if y < -20:
         return -20 
@@ -17,3 +16,5 @@ def myfunction(a,b):
 def main(x,y):
     return myfunction(f(x), f(y))
     
+def expected_result():
+    return [0, 1, 2]

@@ -1,5 +1,5 @@
-def main(x):
-    if x>0:
+def main(x, y, z):
+    if (x < y and y < z) or (x < z):
         return 1
     else:
         return 0

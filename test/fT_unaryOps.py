@@ -1,5 +1,5 @@
-def main(x):
-    if x>0:
+def main(x, c):
+    if not c == -x:
         return 1
     else:
         return 0

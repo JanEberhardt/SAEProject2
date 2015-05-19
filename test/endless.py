@@ -6,3 +6,6 @@ def main(x):
 
 def endless():
     return endless()
+
+def expected_result():
+    return [1]

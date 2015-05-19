@@ -1,7 +1,7 @@
 def main(x):
     y = 1
     if y == 0:
-        return 0
+        pass
     else:
         return y
 

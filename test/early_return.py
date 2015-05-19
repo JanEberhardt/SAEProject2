@@ -10,3 +10,5 @@ def main(x):
 def twice(x):
     return 2*x + 1
 
+def expected_result():
+    return [0,1]

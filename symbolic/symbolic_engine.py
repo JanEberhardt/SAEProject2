@@ -33,6 +33,11 @@ class SymbolicEngine:
         # Now all the final states are in a list and we just need to give the list
         # to the SMT solver to get the inputs, and then run the evaluator on those
         # inputs...
+
+        assetion_violations_to_input = {}
+        for finalState in finalStates:
+            assetion_violations_to_input.update(finalState.violated_assertions)
+
         for finalState in finalStates:
             finalState.solve()
             if not finalState.solved:
@@ -50,11 +55,6 @@ class SymbolicEngine:
         print >> sys.stderr, ""
         ### End stuff we added
 
-
-        assetion_violations_to_input = {}
-        for finalState in finalStates:
-            assetion_violations_to_input.update(finalState.violated_assertions)
-
         return (input_to_ret, assetion_violations_to_input)
 
 
@@ -65,9 +65,7 @@ class SymbolicEngine:
 # This function now returns not only a list of states but also a value 
 # -> the evaluated value of the expresssion!
 def analyze_expr(expr, state):
-    #print >> sys.stderr, "    -> analyze_expr()"
 
-    #TODO
     if type(expr) == ast.Tuple:
         # Collect a list of lists of all possible states...
         listOfLists = []
@@ -77,26 +75,22 @@ def analyze_expr(expr, state):
         crossProducts = crossProduct(listOfLists)
         retValStates = []
         for states in crossProducts:
-            tempState = states[0][0].copy()
-            for i in range(1, len(states)):
+            tempState = state.copy()
+            r = []
+            for i in range(len(states)):
                 tempState = tempState.mergeWithState(states[i][0].copy())
-            fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
-            retValStates.append((tempState, run_expr(expr, fnc)))
+                r.append(states[i][1])
+            retValStates.append((tempState, tuple(r)))
         return retValStates
 
     if type(expr) == ast.Name:
-        #TODO: Find testcase where this assertion get's triggered...
-        #assert(not state.returned)
         fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
         ret = (state, run_expr(expr, fnc)) 
         return [ret] 
 
     if type(expr) == ast.Num:
         assert (isinstance(expr.n, numbers.Integral))
-        ret = []
-        fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
-        ret.append( (state, run_expr(expr, fnc)) )
-        return ret 
+        return [(state, expr.n)] 
 
     if type(expr) == ast.BinOp:
         leftStateVals = analyze_expr(expr.left, state)
@@ -323,10 +317,9 @@ def analyze_stmt(stmt, state):
             returnStates = []
             for stateVal in stateVals:
                 tempState = stateVal[0]
-                fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
-                for el_index in range(len(lhs.elts)):
+                for el_index in range(len(lhs.elts)): 
                     el = lhs.elts[el_index]
-                    tempState.addSym(el.id, run_expr(stmt.value, fnc)[el_index])
+                    tempState.addSym(el.id, stateVal[1][el_index])
                 returnStates.append(tempState) 
             return returnStates
 
@@ -334,8 +327,7 @@ def analyze_stmt(stmt, state):
         if type(lhs) == ast.Name:
             for stateVal in stateVals:
                 tempState = stateVal[0]
-                fnc = FunctionEvaluator(None, tempState.ast_root, tempState.symstore)
-                tempState.addSym(lhs.id, run_expr(stmt.value, fnc))
+                tempState.addSym(lhs.id, stateVal[1])
                 returnStates.append(tempState) 
             return returnStates
         
@@ -352,10 +344,25 @@ def analyze_stmt(stmt, state):
         returnStates = []
         stateVals = analyze_expr(stmt.test, state)
         for tempState, tempVal in stateVals:
+            # Trivial case where we not even need to call the z3 solver...
+            if type(tempVal) is bool and tempVal == True:
+                returnStates.append(tempState)
+                continue
             assertState = tempState.copy()
             assertState.addConstr(Not(tempVal))
             assertState.returned = True
             assertState.solve()
+            assertState.printMe() 
+            
+            # Other trivial case
+            if type(tempVal) is bool and tempVal == False:
+                tempState.violated_assertions[stmt] = assertState.inputs
+                tempState.addConstr(tempVal)
+                tempState.returned = True
+                returnStates.append(tempState)
+                continue
+
+            # Standard case...
             if assertState.solved:
                 tempState.violated_assertions[stmt] = assertState.inputs
                 print >> sys.stderr, "Found the following violating inputs for assertion: "+str(assertState.inputs)
@@ -374,7 +381,7 @@ def analyze_body(body, state):
         for tmpState in states:
             if tmpState.returned:
                 newStates.append(tmpState)
-            # Here I direclty throw away all the states that contain contradictions in 
+            # Here I directly throw away all the states that contain contradictions in 
             # their pconstr!
             elif tmpState.hasContradictions:
                 pass
@@ -395,6 +402,7 @@ def run_expr(expr, fnc):
         return tuple(r)
 
     if type(expr) == ast.Name:
+        # We changed this one because it makes no sense to return 1 if something is true
         if expr.id == 'True':
             return True
         elif expr.id == 'False':
@@ -563,11 +571,7 @@ class FunctionAnalyzer:
             for key in self.mainFunctionInputs:
                 initialState.addSym(key, self.mainFunctionInputs[key])
 
-        #print >> sys.stderr, "Initial Symstore: "+str(initialState.symstore)
-
         self.analyzerStates = analyze_body(self.f.body, initialState)
-        for state in self.analyzerStates:
-            assert (state.returned)
 
         print >> sys.stderr, "\nfunction '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
 
@@ -578,8 +582,7 @@ class FunctionAnalyzer:
         # Only return the States that did return (in the actual function)
         returnStates = []
         for tmpState in self.analyzerStates:
-            if tmpState.returned:
-                returnStates.append(tmpState)
+            returnStates.append(tmpState)
         return returnStates
 
 class AnalyzerState:
@@ -605,8 +608,6 @@ class AnalyzerState:
         
     def addSym(self, var, sym):
         self.symstore[var] = sym
-        #print >> sys.stderr, "         updated or added something in the symstore..."
-        #print >> sys.stderr, "         current state.symstore: " + str(self.symstore)
 
     def getSym(self, var):
         return self.symstore[var]
@@ -629,8 +630,6 @@ class AnalyzerState:
             if constr.eq(pconst):
                 return
         self.pconstrs.append(constr)
-        #print "added or changed something in the symstore:"
-        #self.printMe()
 
     def printMe(self):
         print >> sys.stderr, "State:"
@@ -662,10 +661,11 @@ class AnalyzerState:
         return constraints
 
     def solve(self):
-        assert (self.returned)
+        if not self.returned:
+            raise Exception("There's a path that doesn't return")
         for pconstr in self.pconstrs:
             self.solver.add(pconstr)
-        if str(self.solver.check()) == "sat":
+        if str(self.solver.check()) == "sat" and not self.hasContradictions:
             model = self.solver.model()
             print >> sys.stderr, "SMT solver model: " + str(model)
             for key in model:
@@ -674,7 +674,6 @@ class AnalyzerState:
         else:
             print >> sys.stderr, "   found model that contains contradictions -> cannot be solved..."
             
-            # nothing I guess
 
 ####################
 # Helper Functions #

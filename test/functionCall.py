@@ -6,3 +6,6 @@ def biggerZero(y):
 
 def main(x):
     return biggerZero(x)
+
+def expected_result():
+    return [1,0]

@@ -7,3 +7,6 @@ def main(x, y):
         return 1
 
     return x*z
+
+def expected_result():
+    return [1,-600, 1, 0]
