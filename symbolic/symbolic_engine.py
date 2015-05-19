@@ -84,9 +84,12 @@ def analyze_expr(expr, state):
         return retValStates
 
     if type(expr) == ast.Name:
-        fnc = FunctionEvaluator(None, state.ast_root, state.symstore)
-        ret = (state, run_expr(expr, fnc)) 
-        return [ret] 
+        if expr.id == 'True':
+            return [(state, True)]
+        elif expr.id == 'False':
+            return [(state, False)]
+        else:
+            return [(state, state.symstore[expr.id])]
 
     if type(expr) == ast.Num:
         assert (isinstance(expr.n, numbers.Integral))
@@ -404,9 +407,9 @@ def run_expr(expr, fnc):
     if type(expr) == ast.Name:
         # We changed this one because it makes no sense to return 1 if something is true
         if expr.id == 'True':
-            return True
+            return 1
         elif expr.id == 'False':
-            return False
+            return 0
         return fnc.state[expr.id]
 
     if type(expr) == ast.Num:
@@ -531,13 +534,9 @@ def run_body(body, fnc):
 
 class FunctionEvaluator:
     def __init__(self, f, ast_root, inputs):
-        #TODO: Isn't it bad to comment out stuff that was kind of in the reference
-        # solution????!!!!!!!!!!!!!!!!!
-        # TODO: Easy-fix -> just pass f to the analyzer-states and then everything is
-        # fine, but basically this is not necessary...
-        #assert (type(f) == ast.FunctionDef)
-        #for arg in f.args.args:
-        #    assert arg.id in inputs
+        assert (type(f) == ast.FunctionDef)
+        for arg in f.args.args:
+            assert arg.id in inputs
 
         self.state = inputs.copy()
         self.returned = False
