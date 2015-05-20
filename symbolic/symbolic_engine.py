@@ -105,45 +105,103 @@ def analyze_expr(expr, state):
                 e1 = leftStateVals[i][1]
                 e2 = rightStateVals[j][1]
 
-                if type(expr.op) == ast.Add:
-                    ret = e1 + e2
-                if type(expr.op) == ast.Sub:
-                    ret = e1 - e2
-                if type(expr.op) == ast.Mult:
-                    ret = e1 * e2
-                if type(expr.op) == ast.Div:
-                    ret = e1 / e2
-                if type(expr.op) == ast.Mod:
-                    ret = e1 % e2
-                if type(expr.op) == ast.Pow:
-                    ret = e1 ** e2
-
                 # Evaluate only with constants
                 if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 << e2
+                    newState = state.copy()
+                    newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                    newState = newState.mergeWithState(rightStateVals[j][0].copy())
+                    retValStates.append((newState, ret))
                 if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 >> e2
-
-                newState = state.copy()
-                newState = newState.mergeWithState(leftStateVals[i][0].copy())
-                newState = newState.mergeWithState(rightStateVals[j][0].copy())
-                retValStates.append((newState, ret))
+                    newState = state.copy()
+                    newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                    newState = newState.mergeWithState(rightStateVals[j][0].copy())
+                    retValStates.append((newState, ret))
+                else:
+                    # This "bit" of code handles the casting from boolean to integers...
+                    if castNecessary(e1, e2):
+                        newState = state.copy()
+                        newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                        newState = newState.mergeWithState(rightStateVals[j][0].copy())
+                        if not is_int(e1) and is_int(e2):
+                            tempState = newState.copy()
+                            print e1
+                            tempState.addConstr(e1)
+                            newState.addConstr(Not(e1))
+                            retValStates.append((tempState, binOpVal(1, e2, expr.op)))
+                            retValStates.append((newState, binOpVal(0, e2, expr.op)))
+                        elif is_int(e1) and not is_int(e2):
+                            tempState = newState.copy()
+                            tempState.addConstr(e2)
+                            newState.addConstr(Not(e2))
+                            retValStates.append((tempState, binOpVal(e1, 1, expr.op)))
+                            retValStates.append((newState, binOpVal(e1, 0, expr.op)))
+                        else:
+                            # TODO Come up with a testcase where we need this:
+                            print "really need to do this here???"
+                            print "maybee castnecessary was wrong???"
+                            tempState1 = newState.copy()
+                            tempState2 = newState.copy()
+                            tempState3 = newState.copy()
+                            newState.addConstr(e1)
+                            newState.addConstr(e2)
+                            tempState1.addConstr(Not(e1))
+                            tempState1.addConstr(e2)
+                            tempState2.addConstr(e1)
+                            tempState2.addConstr(Not(e2))
+                            tempState3.addConstr(Not(e1))
+                            tempState3.addConstr(Not(e2))
+                            retValStates.append((newState, binOpVal(1, 1, expr.op)))
+                            retValStates.append((tempState1, binOpVal(0, 1, expr.op)))
+                            retValStates.append((tempState2, binOpVal(1, 0, expr.op)))
+                            retValStates.append((tempState3, binOpVal(0, 0, expr.op)))
+                    # This is the standard case, no casting, just integers...
+                    else:
+                        ret = binOpVal(e1, e2, expr.op)
+                        newState = state.copy()
+                        newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                        newState = newState.mergeWithState(rightStateVals[j][0].copy())
+                        retValStates.append((newState, ret))
         return retValStates
 
     if type(expr) == ast.UnaryOp:
         if type(expr.op) == ast.Not:
-            retValStates = analyze_expr(expr.operand, state)
-            for index, tp in enumerate(retValStates):
-                state, val = tp
-                retValStates[index] = (state, Not(val))
+            tempValStates = analyze_expr(expr.operand, state)
+            retValStates = []
+            for tempValState in tempValStates:
+                val = tempValState[1]
+                # Casting int to bool...
+                if type(val) is int:
+                    retValStates.append((tempValState[0], Not(bool(val))))
+                elif is_int(val):
+                    tempState2 = tempValState[0].copy()
+                    tempValState[0].addConstr(val != 0)
+                    tempState2.addConstr(val == 0)
+                    retValStates.append((tempValState[0], False))
+                    retValStates.append((tempState2, True))
+                # Standard case
+                else: 
+                    retValStates.append((tempValState[0], Not(val)))
             return retValStates
         if type(expr.op) == ast.USub:
-            retValStates = analyze_expr(expr.operand, state)
-            for index, tp in enumerate(retValStates):
-                state, val = tp
-                retValStates[index] = (state, -val)
+            tempValStates = analyze_expr(expr.operand, state)
+            retValStates = []
+            for tempValState in tempValStates:
+                val = tempValState[1]
+                # Casting bool to int...
+                if not is_int(val) and not type(val) is int:
+                    tempState2 = tempValState[0].copy()
+                    tempValState[0].addConstr(val)
+                    tempState2.addConstr(Not(val))
+                    retValStates.append((tempValState[0], -1))
+                    retValStates.append((tempState2, 0))
+                # Standard case
+                else: 
+                    retValStates.append((tempValState[0], -val))
             return retValStates
 
+    #TODO: Casting necessary here -> nope?
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
@@ -196,6 +254,7 @@ def analyze_expr(expr, state):
                 retValStates.append((newState, ret))
         return retValStates
 
+    #TODO: Casting necessary here!
     if type(expr) == ast.BoolOp:
         if (type(expr.op) == ast.And) or (type(expr.op) == ast.Or):
             expr_stateVals = []
@@ -272,6 +331,8 @@ def analyze_expr(expr, state):
             temp = state.copy()
             for constr in constraintsToAdd:
                 temp.addConstr(constr)
+            for ass in finalState.violated_assertions.keys():
+                temp.violated_assertions[ass] = finalState.violated_assertions[ass]
             retValStates.append((temp, finalState.returnValue))    
         return retValStates
 
@@ -298,7 +359,7 @@ def analyze_stmt(stmt, state):
             tempState = trueStateVal[0]
             tempState.addConstr(trueStateVal[1])
             returnStates.extend(analyze_body(stmt.body, tempState))  
-        #False case
+        
         false_test_ast = ast.UnaryOp()
         false_test_ast.op = ast.Not()
         false_test_ast.operand = stmt.test
@@ -306,7 +367,12 @@ def analyze_stmt(stmt, state):
         for falseStateVal in falseStateVals:
             tempState = falseStateVal[0]
             tempState.addConstr(falseStateVal[1])
-            returnStates.extend(analyze_body(stmt.orelse, tempState))  
+            # False case only if there is an else or elif:
+            if not stmt.orelse == []:
+                returnStates.extend(analyze_body(stmt.orelse, tempState))  
+            # Otherwise return the "implied" else state
+            else:
+                returnStates.append(tempState)
         return returnStates 
 
     if type(stmt) == ast.Assign:
@@ -344,36 +410,26 @@ def analyze_stmt(stmt, state):
         negation.op = ast.Not()
         negation.operand = stmt.test
 
-        returnStates = []
-        stateVals = analyze_expr(stmt.test, state)
+        stateVals = analyze_expr(negation, state.copy())
         for tempState, tempVal in stateVals:
+            for ass in tempState.violated_assertions.keys():
+                state.violated_assertions[ass] = tempState.violated_assertions[ass]
             # Trivial case where we not even need to call the z3 solver...
             if type(tempVal) is bool and tempVal == True:
-                returnStates.append(tempState)
                 continue
-            assertState = tempState.copy()
-            assertState.addConstr(Not(tempVal))
-            assertState.returned = True
-            assertState.solve()
-            assertState.printMe() 
-            
-            # Other trivial case
-            if type(tempVal) is bool and tempVal == False:
-                tempState.violated_assertions[stmt] = assertState.inputs
-                tempState.addConstr(tempVal)
-                tempState.returned = True
-                returnStates.append(tempState)
-                continue
+            tempState.returned = True
+            tempState.addConstr(tempVal)
+            tempState.solve()
 
             # Standard case...
-            if assertState.solved:
-                tempState.violated_assertions[stmt] = assertState.inputs
-                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(assertState.inputs)
+            if tempState.solved:
+                print "##### solved"
+                state.violated_assertions[stmt] = tempState.inputs
+                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(tempState.inputs)
             else:
                 print >> sys.stderr, "Found no inputs for assertion -> means assertion holds in this case..."
-            tempState.addConstr(tempVal)
-            returnStates.append(tempState)
-        return returnStates 
+             
+        return [state] 
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
@@ -633,6 +689,7 @@ class AnalyzerState:
     def printMe(self):
         print >> sys.stderr, "State:"
         print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs)+" returnValue: "+str(self.returnValue)
+        print >> sys.stderr, "  violated_assertions: "+str(self.violated_assertions)
 
     def copy(self):
         newState = AnalyzerState(self.ast_root)
@@ -640,6 +697,7 @@ class AnalyzerState:
         newState.symstore = self.symstore.copy()
         newState.pconstrs = copy.copy(self.pconstrs)
         newState.returnValue = copy.copy(self.returnValue)
+        newState.violated_assertions = copy.copy(self.violated_assertions)
         newState.hasContradictions = copy.copy(self.hasContradictions)
         return newState
     
@@ -649,6 +707,8 @@ class AnalyzerState:
             assert(self.getSym(sym) == otherState.getSym(sym))
         for pc in otherState.pconstrs:
             mergedState.addConstr(pc)
+        for ass in otherState.violated_assertions.keys():
+            mergedState.violated_assertions[ass] = otherState.violated_assertions[ass]
         return mergedState
 
     def getConstrsOfVars(self, variables):
@@ -789,4 +849,26 @@ def tupleComparator(left, right, state):
     ret = analyze_expr(monsterAndRoot, state)
     return ret
 
+def binOpVal(e1, e2, op):
+    ret = 0
+    if type(op) == ast.Add:
+        ret = e1 + e2
+    if type(op) == ast.Sub:
+        ret = e1 - e2
+    if type(op) == ast.Mult:
+        ret = e1 * e2
+    if type(op) == ast.Div:
+        ret = e1 / e2
+    if type(op) == ast.Mod:
+        ret = e1 % e2
+    if type(op) == ast.Pow:
+        ret = e1 ** e2
+    return ret
 
+def castNecessary(e1, e2):
+    ret = False
+    if not is_int(e1) and not type(e1) is int:
+        ret = True
+    if not is_int(e2) and not type(e2) is int: 
+        ret = True
+    return ret
