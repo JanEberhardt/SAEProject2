@@ -2,7 +2,6 @@
 
 clear
 
-
 FILES=./test/*.py
 for f in $FILES
 do
@@ -14,3 +13,5 @@ do
     echo ""
     read -p "--> Press enter to run next test" yn
 done
+
+

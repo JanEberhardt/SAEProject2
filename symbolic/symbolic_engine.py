@@ -89,7 +89,10 @@ def analyze_expr(expr, state):
         elif expr.id == 'False':
             return [(state, False)]
         else:
-            return [(state, state.symstore[expr.id])]
+            if expr.id in state.symstore.keys():
+                return [(state, state.symstore[expr.id])]
+            else:
+                raise Exception("Variable is used before assigned!")
 
     if type(expr) == ast.Num:
         assert (isinstance(expr.n, numbers.Integral))
@@ -105,63 +108,30 @@ def analyze_expr(expr, state):
                 e1 = leftStateVals[i][1]
                 e2 = rightStateVals[j][1]
 
+                newState = state.copy()
+                newState = newState.mergeWithState(leftStateVals[i][0].copy())
+                newState = newState.mergeWithState(rightStateVals[j][0].copy())
+
                 # Evaluate only with constants
                 if type(expr.op) == ast.LShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 << e2
-                    newState = state.copy()
-                    newState = newState.mergeWithState(leftStateVals[i][0].copy())
-                    newState = newState.mergeWithState(rightStateVals[j][0].copy())
                     retValStates.append((newState, ret))
-                if type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
+                elif type(expr.op) == ast.RShift and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
                     ret = e1 >> e2
-                    newState = state.copy()
-                    newState = newState.mergeWithState(leftStateVals[i][0].copy())
-                    newState = newState.mergeWithState(rightStateVals[j][0].copy())
                     retValStates.append((newState, ret))
+                elif type(expr.op) == ast.Pow and type(expr.left) == ast.Num and type(expr.right) == ast.Num:
+                    ret = e1 ** e2
                 else:
-                    # This "bit" of code handles the casting from boolean to integers...
-                    if castNecessary(e1, e2):
-                        newState = state.copy()
-                        newState = newState.mergeWithState(leftStateVals[i][0].copy())
-                        newState = newState.mergeWithState(rightStateVals[j][0].copy())
-                        if not is_int(e1) and is_int(e2):
-                            tempState = newState.copy()
-                            print e1
-                            tempState.addConstr(e1)
-                            newState.addConstr(Not(e1))
-                            retValStates.append((tempState, binOpVal(1, e2, expr.op)))
-                            retValStates.append((newState, binOpVal(0, e2, expr.op)))
-                        elif is_int(e1) and not is_int(e2):
-                            tempState = newState.copy()
-                            tempState.addConstr(e2)
-                            newState.addConstr(Not(e2))
-                            retValStates.append((tempState, binOpVal(e1, 1, expr.op)))
-                            retValStates.append((newState, binOpVal(e1, 0, expr.op)))
-                        else:
-                            # TODO Come up with a testcase where we need this:
-                            print "really need to do this here???"
-                            print "maybee castnecessary was wrong???"
-                            tempState1 = newState.copy()
-                            tempState2 = newState.copy()
-                            tempState3 = newState.copy()
-                            newState.addConstr(e1)
-                            newState.addConstr(e2)
-                            tempState1.addConstr(Not(e1))
-                            tempState1.addConstr(e2)
-                            tempState2.addConstr(e1)
-                            tempState2.addConstr(Not(e2))
-                            tempState3.addConstr(Not(e1))
-                            tempState3.addConstr(Not(e2))
-                            retValStates.append((newState, binOpVal(1, 1, expr.op)))
-                            retValStates.append((tempState1, binOpVal(0, 1, expr.op)))
-                            retValStates.append((tempState2, binOpVal(1, 0, expr.op)))
-                            retValStates.append((tempState3, binOpVal(0, 0, expr.op)))
+                    # Here we handle casting from booleans to integers...
+                    if not is_int(e1) and not type(e1) is int and (is_int(e2) or type(e2) is int):
+                        retValStates.append((newState, binOpVal(If(e1, 1, 0), e2, expr.op)))
+                    elif not is_int(e2) and not type(e2) is int and (is_int(e1) or type(e1) is int):
+                        retValStates.append((newState, binOpVal(e1, If(e2, 1, 0), expr.op)))
+                    elif not is_int(e1) and not type(e1) is int and not is_int(e2) and not type(e2) is int:
+                        retValStates.append((newState, binOpVal(If(e1, 1, 0), If(e2, 1, 0), expr.op)))
                     # This is the standard case, no casting, just integers...
                     else:
                         ret = binOpVal(e1, e2, expr.op)
-                        newState = state.copy()
-                        newState = newState.mergeWithState(leftStateVals[i][0].copy())
-                        newState = newState.mergeWithState(rightStateVals[j][0].copy())
                         retValStates.append((newState, ret))
         return retValStates
 
@@ -175,11 +145,7 @@ def analyze_expr(expr, state):
                 if type(val) is int:
                     retValStates.append((tempValState[0], Not(bool(val))))
                 elif is_int(val):
-                    tempState2 = tempValState[0].copy()
-                    tempValState[0].addConstr(val != 0)
-                    tempState2.addConstr(val == 0)
-                    retValStates.append((tempValState[0], False))
-                    retValStates.append((tempState2, True))
+                    retValStates.append((tempValState[0], (val != 0)))
                 # Standard case
                 else: 
                     retValStates.append((tempValState[0], Not(val)))
@@ -191,17 +157,12 @@ def analyze_expr(expr, state):
                 val = tempValState[1]
                 # Casting bool to int...
                 if not is_int(val) and not type(val) is int:
-                    tempState2 = tempValState[0].copy()
-                    tempValState[0].addConstr(val)
-                    tempState2.addConstr(Not(val))
-                    retValStates.append((tempValState[0], -1))
-                    retValStates.append((tempState2, 0))
+                    retValStates.append((tempValState[0], -If(val, 1, 0)))
                 # Standard case
                 else: 
                     retValStates.append((tempValState[0], -val))
             return retValStates
 
-    #TODO: Casting necessary here -> nope?
     if type(expr) == ast.Compare:
         assert (len(expr.ops) == 1)  # Do not allow for x==y==0 syntax
         assert (len(expr.comparators) == 1)
@@ -216,6 +177,18 @@ def analyze_expr(expr, state):
             for j in range(0, len(rightStateVals)):
                 e1 = leftStateVals[i][1]
                 e2 = rightStateVals[j][1]
+
+                # We cast integers to booleans if we want to compare an int and a bool:
+                if (type(e1) is int or is_int(e1)) and not type(e2) is int and not is_int(e2):
+                    if type(e1) is int:
+                        e1 = bool(e1)
+                    else:
+                        e1 = (e1 != 0)
+                elif (type(e2) is int or is_int(e2)) and not type(e1) is int and not is_int(e1):
+                    if type(e2) is int:
+                        e2 = bool(e2)
+                    else:
+                        e2 = (e2 != 0)
 
                 #Special case for tuples:
                 if type(e1) == tuple or type(e2) == tuple:
@@ -254,7 +227,6 @@ def analyze_expr(expr, state):
                 retValStates.append((newState, ret))
         return retValStates
 
-    #TODO: Casting necessary here!
     if type(expr) == ast.BoolOp:
         if (type(expr.op) == ast.And) or (type(expr.op) == ast.Or):
             expr_stateVals = []
@@ -269,21 +241,27 @@ def analyze_expr(expr, state):
                 # State in which to carry out the evaluation
                 tempState = state.copy()
                 if type(expr.op) == ast.And:
-                    val = True
+                    newval = True
                 else:
-                    val = False
+                    newval = False
                 for stateVal in lst:
                     tempState = tempState.mergeWithState(stateVal[0].copy())
+                    val = stateVal[1]
+                    if type(val) is int:
+                        val = bool(val)
+                    elif is_int(val):
+                        val = (val != 0)
+
                     if type(expr.op) == ast.And:
-                        val = And(val, stateVal[1])
+                        newval = And(newval, val)
                     else:
-                        val = Or(val, stateVal[1])
-                retStateVals.append((tempState, val))
+                        newval = Or(newval, val)
+                retStateVals.append((tempState, newval))
             return retStateVals
 
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
-
+        print "analyzeing function "+str(expr.func.id)
         assert (len(expr.args) == len(f.args.args))
         
         #First we need to analyze all the function arguments
@@ -319,6 +297,10 @@ def analyze_expr(expr, state):
         # Run the analyzer on each possible input combination an store 
         # all the possible resulting states in a list
         finalStates = []
+        # In case we have a function without any inputs:
+        if inputsList == []:
+            fnc_a = FunctionAnalyzer(f, state.ast_root, {})
+            finalStates.extend(fnc_a.analyze())
         for inputs in inputsList:
             fnc_a = FunctionAnalyzer(f, state.ast_root, inputs)
             finalStates.extend(fnc_a.analyze())
@@ -410,6 +392,8 @@ def analyze_stmt(stmt, state):
         negation.op = ast.Not()
         negation.operand = stmt.test
 
+        returnStates = []
+
         stateVals = analyze_expr(negation, state.copy())
         for tempState, tempVal in stateVals:
             for ass in tempState.violated_assertions.keys():
@@ -418,6 +402,7 @@ def analyze_stmt(stmt, state):
             if type(tempVal) is bool and tempVal == True:
                 continue
             tempState.returned = True
+            returnStates.append(state.mergeWithState(tempState))
             tempState.addConstr(tempVal)
             tempState.solve()
 
@@ -429,7 +414,10 @@ def analyze_stmt(stmt, state):
             else:
                 print >> sys.stderr, "Found no inputs for assertion -> means assertion holds in this case..."
              
-        return [state] 
+        for assKey in state.violated_assertions.keys():
+            for rS in returnStates:
+                rS.violated_assertions[assKey] = state.violated_assertions[assKey]
+        return returnStates 
 
     raise Exception('Unhandled statement: ' + ast.dump(stmt))
 
@@ -720,8 +708,6 @@ class AnalyzerState:
         return constraints
 
     def solve(self):
-        if not self.returned:
-            raise Exception("There's a path that doesn't return")
         for pconstr in self.pconstrs:
             self.solver.add(pconstr)
         if str(self.solver.check()) == "sat" and not self.hasContradictions:
@@ -730,6 +716,8 @@ class AnalyzerState:
             for key in model:
                 self.inputs[str(key)] = int(str(model[key]))
             self.solved = True 
+            if not self.returned:
+                raise Exception("There's a path that doesn't return")
         else:
             print >> sys.stderr, "   found model that contains contradictions -> cannot be solved..."
             
@@ -850,25 +838,16 @@ def tupleComparator(left, right, state):
     return ret
 
 def binOpVal(e1, e2, op):
-    ret = 0
     if type(op) == ast.Add:
-        ret = e1 + e2
+        return e1 + e2
     if type(op) == ast.Sub:
-        ret = e1 - e2
+        return e1 - e2
     if type(op) == ast.Mult:
-        ret = e1 * e2
+        return e1 * e2
     if type(op) == ast.Div:
-        ret = e1 / e2
+        return e1 / e2
     if type(op) == ast.Mod:
-        ret = e1 % e2
+        return e1 % e2
     if type(op) == ast.Pow:
-        ret = e1 ** e2
-    return ret
-
-def castNecessary(e1, e2):
-    ret = False
-    if not is_int(e1) and not type(e1) is int:
-        ret = True
-    if not is_int(e2) and not type(e2) is int: 
-        ret = True
-    return ret
+        return e1 ** e2
+    raise Exception("The specified option '"+str(op)+"' is not available symbolically!")

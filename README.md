@@ -3,6 +3,7 @@ Software Architecture and Engineering Project 2
 
 TODOS:
 ------
+- [ ] implement tuple assignment correctly: tupleOftuple.py
 - [x] Implement tuple comparision correctly...
 - [x] Only return path inputs if no assertion has been triggered...
 - [x] Fix assertions!
@@ -17,6 +18,8 @@ TESTS THAT KEEP FAILING:
 -----------------------
 - [x] local_boolean.py
 - [x] tuple_of_tuple_hard.py -> because of missing tuple comparison...
+- [ ] iTeam/call.py
+- [ ] iTeam/simpleBla.py
 
 OPTIMIZATIONS:
 --------------
