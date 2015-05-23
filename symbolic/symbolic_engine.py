@@ -16,6 +16,8 @@ class SymbolicEngine:
     # and ret is expected return value of the function
     # Note: all returned inputs should explore different program paths
     def explore(self):
+        #print crossProduct([[1,2,3]])
+        #assert False
         # Generates default input
         input = generate_inputs(self.fnc, {})
         #f = FunctionEvaluator(self.fnc, self.program_ast, input)
@@ -261,7 +263,6 @@ def analyze_expr(expr, state):
 
     if type(expr) == ast.Call:
         f = find_function(state.ast_root, expr.func.id)
-        print "analyzeing function "+str(expr.func.id)
         assert (len(expr.args) == len(f.args.args))
         
         #First we need to analyze all the function arguments
@@ -284,7 +285,6 @@ def analyze_expr(expr, state):
             listOfLists.append(inputsStateValsDict[key])
         cpList = crossProduct(listOfLists)
         keys = inputsStateValsDict.keys()
-
         # Build the actual inputs
         inputsList = []
         for lst in cpList:
@@ -408,7 +408,6 @@ def analyze_stmt(stmt, state):
 
             # Standard case...
             if tempState.solved:
-                print "##### solved"
                 state.violated_assertions[stmt] = tempState.inputs
                 print >> sys.stderr, "Found the following violating inputs for assertion: "+str(tempState.inputs)
             else:
@@ -619,7 +618,6 @@ class FunctionAnalyzer:
         print >> sys.stderr, "\nfunction '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
 
         for state in self.analyzerStates:
-            state.printMe()
             print >> sys.stderr, "  returnValue: "+str(state.returnValue)
 
         # Only return the States that did return (in the actual function)
@@ -789,8 +787,13 @@ def containsAllElements(list1, list2):
 # becomes as an argument a list of lists and returns all possible combinations:
 # ex: crossProduct([[a,b,c],[d,e]]) returns [[a,d], [a,e], [b,d], [b,e], [c,d],[c,d]]
 def crossProduct(listOfLists):
-    if len(listOfLists)<2:
-        return listOfLists
+    if len(listOfLists)==1:
+        ret = []
+        for item in listOfLists[0]:
+            ret.append([item])
+        return ret
+    if len(listOfLists)==0:
+        return []
 
     temp =[]
     for t in listOfLists[0]:

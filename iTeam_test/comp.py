@@ -8,5 +8,5 @@ def main(x, y):
 	elif (x > y):
 		return 3 
 
-def expected_results():
+def expected_result():
 	return [1,2,3]
