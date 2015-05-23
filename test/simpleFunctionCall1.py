@@ -1,13 +1,11 @@
 def test(x, y):
     if (x != 0):
-	    return 1
+        return 1
     else:
         return 0
-	
-
 
 def main(x, y):
-    return test(test(y,x), y)
+    return test(x, y)
 
 def expected_result():
     return [0, 1]

@@ -1,8 +1,7 @@
 import ast
 import numbers
 
-#are we allowed to do this?
-import sys
+#import sys
 import copy
 from z3 import *
 
@@ -44,17 +43,23 @@ class SymbolicEngine:
             finalState.solve()
             if not finalState.solved:
                 continue
-            inputs = finalState.inputs
+
+            # only take the inputs that are inputs of the main function:
+            inputs = {}
+            reallyInputs = generate_inputs(self.fnc, {})
+            for rIKey in reallyInputs.keys():
+                inputs[rIKey] = finalState.inputs[rIKey]
+
             ret = finalState.returnValue
             # In case we returned something weird before and the return thing still
             # contains some symbolic stuff run over the program once again with the 
             # evaluator
             if not isinstance(ret, int):
-                fe = FunctionEvaluator(self.fnc, self.program_ast, finalState.inputs)   
+                fe = FunctionEvaluator(self.fnc, self.program_ast, inputs)   
                 ret = fe.eval()
-            input_to_ret.append((finalState.inputs, ret))
-        print >> sys.stderr, ""
-        print >> sys.stderr, ""
+            input_to_ret.append((inputs, ret))
+        #print >> sys.stderr, ""
+        #print >> sys.stderr, ""
         ### End stuff we added
 
         return (input_to_ret, assetion_violations_to_input)
@@ -409,9 +414,9 @@ def analyze_stmt(stmt, state):
             # Standard case...
             if tempState.solved:
                 state.violated_assertions[stmt] = tempState.inputs
-                print >> sys.stderr, "Found the following violating inputs for assertion: "+str(tempState.inputs)
-            else:
-                print >> sys.stderr, "Found no inputs for assertion -> means assertion holds in this case..."
+                #print >> sys.stderr, "Found the following violating inputs for assertion: "+str(tempState.inputs)
+            #else:
+                #print >> sys.stderr, "Found no inputs for assertion -> means assertion holds in this case..."
              
         for assKey in state.violated_assertions.keys():
             for rS in returnStates:
@@ -600,8 +605,8 @@ class FunctionAnalyzer:
         self.f = f
 
     def analyze(self):
-        print >> sys.stderr, ""
-        print >> sys.stderr, "FunctionAnalyzer.analyze(function:"+str(self.f.name)+")"
+        #print >> sys.stderr, ""
+        #print >> sys.stderr, "FunctionAnalyzer.analyze(function:"+str(self.f.name)+")"
 
         initialState = AnalyzerState(self.ast_root)
         initialState.inputs = self.mainFunctionInputs.copy()
@@ -615,10 +620,10 @@ class FunctionAnalyzer:
 
         self.analyzerStates = analyze_body(self.f.body, initialState)
 
-        print >> sys.stderr, "\nfunction '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
+        #print >> sys.stderr, "\nfunction '"+self.f.name+"' has "+str(len(self.analyzerStates))+" final state(s):"
 
-        for state in self.analyzerStates:
-            print >> sys.stderr, "  returnValue: "+str(state.returnValue)
+        #for state in self.analyzerStates:
+            #print >> sys.stderr, "  returnValue: "+str(state.returnValue)
 
         # Only return the States that did return (in the actual function)
         returnStates = []
@@ -673,9 +678,10 @@ class AnalyzerState:
         self.pconstrs.append(constr)
 
     def printMe(self):
-        print >> sys.stderr, "State:"
-        print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs)+" returnValue: "+str(self.returnValue)
-        print >> sys.stderr, "  violated_assertions: "+str(self.violated_assertions)
+        pass
+        #print >> sys.stderr, "State:"
+        #print >> sys.stderr, "  symstore: "+str(self.symstore)+" , pconstrs: "+str(self.pconstrs)+" returnValue: "+str(self.returnValue)
+        #print >> sys.stderr, "  violated_assertions: "+str(self.violated_assertions)
 
     def copy(self):
         newState = AnalyzerState(self.ast_root)
@@ -710,14 +716,14 @@ class AnalyzerState:
             self.solver.add(pconstr)
         if str(self.solver.check()) == "sat" and not self.hasContradictions:
             model = self.solver.model()
-            print >> sys.stderr, "SMT solver model: " + str(model)
+            #print >> sys.stderr, "SMT solver model: " + str(model)
             for key in model:
                 self.inputs[str(key)] = int(str(model[key]))
             self.solved = True 
             if not self.returned:
                 raise Exception("There's a path that doesn't return")
-        else:
-            print >> sys.stderr, "   found model that contains contradictions -> cannot be solved..."
+        #else:
+            #print >> sys.stderr, "   found model that contains contradictions -> cannot be solved..."
             
 
 ####################

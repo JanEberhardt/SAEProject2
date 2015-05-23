@@ -5,8 +5,9 @@ def f(a):
         return 2
     else:
         return 3
+
 def main(x,y,z):
-    a = (f(x),f(y), f(z))
+    a = (f(x), f(y), f(z))
     b = (1,2,3)
     if a == b:
         return 200 

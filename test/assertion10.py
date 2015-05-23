@@ -1,9 +1,9 @@
 def might_fail ( x ):
-    assert ( x >= 0) # Assert #1
+    assert ( x >= 0)
     return True
 
 def main ( x ):
-    assert ( might_fail ( x *2)) # Assert #2
+    assert ( might_fail ( x *2))
     return 0
 
 def expected_result():

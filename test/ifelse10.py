@@ -1,9 +1,10 @@
 def main(x):
-    if x != 0:
+    y = x > 1
+    if y:
         return 1
     else:
         return 0
-
+    return y
 
 def expected_result():
-    return [1, 0]
+    return [0, 1]

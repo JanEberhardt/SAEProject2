@@ -6,7 +6,6 @@ def main(x, y):
             return 5
         elif x < 20:
             return 15
-
     return -1
 
 def expected_result():
